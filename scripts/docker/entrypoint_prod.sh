@@ -20,9 +20,11 @@ AIRFLOW_COMMAND="${1:-}"
 
 set -euo pipefail
 
-# Update LD_PRELOAD path for Amazon Linux
-LD_PRELOAD="/usr/lib64/libstdc++.so.6"
-export LD_PRELOAD
+# Update LD_PRELOAD path for Amazon Linux - only if file exists
+if [ -f "/usr/lib64/libstdc++.so.6" ]; then
+    LD_PRELOAD="/usr/lib64/libstdc++.so.6"
+    export LD_PRELOAD
+fi
 
 function run_check_with_retries {
     local cmd
