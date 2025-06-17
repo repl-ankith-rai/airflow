@@ -1346,7 +1346,7 @@ RUN dnf update -y && \
         freetds-devel \
         findutils \
         which \
-        netcat-openbsd \
+        nmap-ncat \
         && \
     alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
     alternatives --set python /usr/bin/python3.9 && \
@@ -1635,7 +1635,7 @@ RUN dnf update -y && \
         freetds \
         findutils \
         which \
-        netcat-openbsd \
+        nmap-ncat \
         && \
     alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
     alternatives --set python /usr/bin/python3.9 && \

@@ -78,7 +78,7 @@ function run_nc() {
     local port="${2}"
     local ip
     ip=$(python -c "import socket; print(socket.gethostbyname('${host}'))")
-    nc -zvvn "${ip}" "${port}"
+    ncat -zvvn "${ip}" "${port}"
 }
 
 
