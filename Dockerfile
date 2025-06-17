@@ -51,7 +51,7 @@ ARG AIRFLOW_VERSION="2.11.0"
 # You can swap comments between those two args to test pip from the main version
 # When you attempt to test if the version of `pip` from specified branch works for our builds
 # Also use `force pip` label on your PR to swap all places we use `uv` to `pip`
-ARG AIRFLOW_PIP_VERSION=23.3.2
+ARG AIRFLOW_PIP_VERSION=25.1.1
 ARG AIRFLOW_UV_VERSION=0.7.3
 ARG AIRFLOW_USE_UV="false"
 ARG UV_HTTP_TIMEOUT="300"
@@ -1346,6 +1346,7 @@ RUN dnf update -y && \
         freetds-devel \
         findutils \
         which \
+        netcat-openbsd \
         && \
     alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
     alternatives --set python /usr/bin/python3.9 && \
@@ -1549,6 +1550,12 @@ RUN --mount=type=cache,id=prod-$TARGETARCH-$DEPENDENCY_CACHE_EPOCH,target=/tmp/.
     if [[ -n "${ADDITIONAL_PYTHON_DEPS}" ]]; then \
         bash /scripts/docker/install_additional_dependencies.sh; \
     fi; \
+    # Upgrade requests to resolve dependency conflicts with azure-kusto-data and openlineage-python
+    pip install --upgrade "requests>=2.32.3" && \
+    # Fix pip cache permissions
+    mkdir -p /tmp/.cache/pip && \
+    chown -R airflow:0 /tmp/.cache && \
+    chmod -R g+rw /tmp/.cache && \
     find "${AIRFLOW_USER_HOME_DIR}/.local/" -name '*.pyc' -print0 | xargs -0 rm -f || true ; \
     find "${AIRFLOW_USER_HOME_DIR}/.local/" -type d -name '__pycache__' -print0 | xargs -0 rm -rf || true ;
     # make sure that all directories and files in .local are also group accessible
@@ -1628,6 +1635,7 @@ RUN dnf update -y && \
         freetds \
         findutils \
         which \
+        netcat-openbsd \
         && \
     alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
     alternatives --set python /usr/bin/python3.9 && \
@@ -1738,6 +1746,8 @@ ENV DUMB_INIT_SETSID="1" \
     PS1="(airflow)" \
     AIRFLOW_VERSION=${AIRFLOW_VERSION} \
     AIRFLOW__CORE__LOAD_EXAMPLES="false" \
+    AIRFLOW__METRICS__TIMER_UNIT_CONSISTENCY="true" \
+    AIRFLOW__METRICS__USE_PATTERN_MATCH="true" \
     PATH="/root/bin:${PATH}" \
     AIRFLOW_PIP_VERSION=${AIRFLOW_PIP_VERSION} \
     AIRFLOW_UV_VERSION=${AIRFLOW_UV_VERSION} \
