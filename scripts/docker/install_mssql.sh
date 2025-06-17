@@ -26,9 +26,7 @@ declare -a packages
 
 : "${INSTALL_MSSQL_CLIENT:?Should be true or false}"
 
-
 function install_mssql_client() {
-    # Install MsSQL client from Microsoft repositories
     if [[ ${INSTALL_MSSQL_CLIENT:="true"} != "true" ]]; then
         echo
         echo "${COLOR_BLUE}Skip installing mssql client${COLOR_RESET}"
@@ -37,20 +35,16 @@ function install_mssql_client() {
     fi
     packages=("msodbcsql18")
 
-    common::import_trusted_gpg "EB3E94ADBE1229CF" "microsoft"
-
     echo
     echo "${COLOR_BLUE}Installing mssql client${COLOR_RESET}"
     echo
 
-    echo "deb [arch=amd64,arm64] https://packages.microsoft.com/debian/$(lsb_release -rs)/prod $(lsb_release -cs) main" > \
-        /etc/apt/sources.list.d/mssql-release.list
-    apt-get update -yqq
-    apt-get upgrade -yqq
-    ACCEPT_EULA=Y apt-get -yqq install --no-install-recommends "${packages[@]}"
-    rm -rf /var/lib/apt/lists/*
-    apt-get autoremove -yqq --purge
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    # Add Microsoft repo for Amazon Linux 2023 (RHEL 9 compatible)
+    dnf install -y dnf-plugins-core
+    dnf config-manager --add-repo https://packages.microsoft.com/config/rhel/9.0/prod.repo
+    dnf makecache
+    ACCEPT_EULA=Y dnf install -y msodbcsql18
+    dnf clean all
 }
 
 install_mssql_client "${@}"

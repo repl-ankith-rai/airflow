@@ -47,7 +47,8 @@ ARG AIRFLOW_USER_HOME_DIR=/home/airflow
 # latest released version here
 ARG AIRFLOW_VERSION="2.11.0"
 
-ARG PYTHON_BASE_IMAGE="python:3.9-slim-bookworm"
+# ARG PYTHON_BASE_IMAGE="python:3.9-slim-bookworm"
+ARG PYTHON_BASE_IMAGE="amazonlinux:2023"
 
 
 # You can swap comments between those two args to test pip from the main version
@@ -125,9 +126,9 @@ function get_runtime_apt_deps() {
     local debian_version_apt_deps
     # Get debian version without installing lsb_release
     # shellcheck disable=SC1091
-    debian_version=$(. /etc/os-release;   printf '%s\n' "$VERSION_CODENAME";)
+    # debian_version=$(. /etc/os-release;   printf '%s\n' "$VERSION_CODENAME";)
     echo
-    echo "DEBIAN CODENAME: ${debian_version}"
+    # echo "DEBIAN CODENAME: ${debian_version}"
     echo
     debian_version_apt_deps="libffi8 libldap-2.5-0 libssl3 netcat-openbsd"
     echo
@@ -203,7 +204,7 @@ function install_debian_runtime_dependencies() {
 }
 
 if [[ "${INSTALLATION_TYPE}" == "RUNTIME" ]]; then
-    get_runtime_apt_deps
+    # get_runtime_apt_deps
     install_debian_runtime_dependencies
     install_docker_cli
 
@@ -1689,3 +1690,8 @@ LABEL org.apache.airflow.distro="debian" \
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint"]
 CMD []
+
+# Install Python 3, pip, and build tools for Amazon Linux 2023
+RUN dnf -y update && \
+    dnf -y install python3 python3-devel python3-pip gcc gcc-c++ make which && \
+    dnf clean all

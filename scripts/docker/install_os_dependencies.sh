@@ -32,106 +32,112 @@ else
     exit 1
 fi
 
-function get_dev_apt_deps() {
-    if [[ "${DEV_APT_DEPS=}" == "" ]]; then
-        DEV_APT_DEPS="apt-transport-https apt-utils build-essential ca-certificates dirmngr \
-freetds-bin freetds-dev git graphviz graphviz-dev krb5-user ldap-utils libev4 libev-dev libffi-dev libgeos-dev \
-libkrb5-dev libldap2-dev libleveldb1d libleveldb-dev libsasl2-2 libsasl2-dev libsasl2-modules \
-libssl-dev libxmlsec1 libxmlsec1-dev locales lsb-release openssh-client pkgconf sasl2-bin \
-software-properties-common sqlite3 sudo unixodbc unixodbc-dev zlib1g-dev"
-        export DEV_APT_DEPS
+function get_dev_dnf_deps() {
+    echo "Getting dev dnf deps,${DEV_DNF_DEPS:-}"
+    if [[ "${DEV_DNF_DEPS:-}" == "" ]]; then
+        DEV_DNF_DEPS="\
+            gcc gcc-c++ make which \
+            python3-devel \
+            git \
+            graphviz graphviz-devel \
+            krb5-devel \
+            openldap-devel \
+            cyrus-sasl-devel cyrus-sasl-lib \
+            libffi-devel \
+            openssl-devel \
+            freetds freetds-devel \
+            leveldb-devel \
+            sqlite sqlite-devel \
+            unixODBC unixODBC-devel \
+            rsync \
+            sudo \
+            curl \
+            pkgconfig \
+            shadow-utils \
+            zlib-devel \
+            libxmlsec1 libxmlsec1-devel \
+            net-tools \
+            ncurses-compat-libs \
+            passwd \
+            tar \
+            gzip \
+            bzip2 \
+            findutils \
+            diffutils \
+            util-linux \
+            iproute \
+            hostname \
+            procps-ng \
+            redhat-lsb-core \
+            dumb-init"
+        export DEV_DNF_DEPS
     fi
 }
 
-function get_runtime_apt_deps() {
-    local debian_version
-    local debian_version_apt_deps
-    # Get debian version without installing lsb_release
-    # shellcheck disable=SC1091
-    debian_version=$(. /etc/os-release;   printf '%s\n' "$VERSION_CODENAME";)
-    echo
-    echo "DEBIAN CODENAME: ${debian_version}"
-    echo
-    debian_version_apt_deps="libffi8 libldap-2.5-0 libssl3 netcat-openbsd"
-    echo
-    echo "APPLIED INSTALLATION CONFIGURATION FOR DEBIAN VERSION: ${debian_version}"
-    echo
-    if [[ "${RUNTIME_APT_DEPS=}" == "" ]]; then
-        RUNTIME_APT_DEPS="apt-transport-https apt-utils ca-certificates \
-curl dumb-init freetds-bin krb5-user libev4 libgeos-dev \
-ldap-utils libsasl2-2 libsasl2-modules libxmlsec1 locales ${debian_version_apt_deps} \
-lsb-release openssh-client python3-selinux rsync sasl2-bin sqlite3 sudo unixodbc"
-        export RUNTIME_APT_DEPS
+function get_runtime_dnf_deps() {
+    if [[ "${RUNTIME_DNF_DEPS:-}" == "" ]]; then
+        RUNTIME_DNF_DEPS="\
+            python3 \
+            python3-pip \
+            which \
+            freetds \
+            krb5-libs \
+            openldap \
+            cyrus-sasl-lib \
+            libffi \
+            openssl \
+            sqlite \
+            unixODBC \
+            rsync \
+            sudo \
+            curl \
+            shadow-utils \
+            zlib \
+            libxmlsec1 \
+            net-tools \
+            ncurses-compat-libs \
+            passwd \
+            tar \
+            gzip \
+            bzip2 \
+            findutils \
+            diffutils \
+            util-linux \
+            iproute \
+            hostname \
+            procps-ng \
+            redhat-lsb-core \
+            dumb-init"
+        export RUNTIME_DNF_DEPS
     fi
 }
 
 function install_docker_cli() {
-    apt-get update
-    apt-get install ca-certificates curl
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-    chmod a+r /etc/apt/keyrings/docker.asc
-    # shellcheck disable=SC1091
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
-      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-      tee /etc/apt/sources.list.d/docker.list > /dev/null
-    apt-get update
-    apt-get install -y --no-install-recommends docker-ce-cli
+    dnf install -y dnf-plugins-core device-mapper-persistent-data lvm2
+    dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    dnf install -y docker-ce-cli
+    dnf clean all
 }
 
-function install_debian_dev_dependencies() {
-    apt-get update
-    apt-get install -yqq --no-install-recommends apt-utils >/dev/null 2>&1
-    apt-get install -y --no-install-recommends curl gnupg2 lsb-release
-    # shellcheck disable=SC2086
-    export ${ADDITIONAL_DEV_APT_ENV?}
-    if [[ ${DEV_APT_COMMAND} != "" ]]; then
-        bash -o pipefail -o errexit -o nounset -o nolog -c "${DEV_APT_COMMAND}"
-    fi
-    if [[ ${ADDITIONAL_DEV_APT_COMMAND} != "" ]]; then
-        bash -o pipefail -o errexit -o nounset -o nolog -c "${ADDITIONAL_DEV_APT_COMMAND}"
-    fi
-    apt-get update
-    local debian_version
-    local debian_version_apt_deps
-    # Get debian version without installing lsb_release
-    # shellcheck disable=SC1091
-    debian_version=$(. /etc/os-release;   printf '%s\n' "$VERSION_CODENAME";)
-    echo
-    echo "DEBIAN CODENAME: ${debian_version}"
-    echo
-    # shellcheck disable=SC2086
-    apt-get install -y --no-install-recommends ${DEV_APT_DEPS} ${ADDITIONAL_DEV_APT_DEPS}
+function install_amazonlinux_dev_dependencies() {
+    dnf makecache
+    dnf groupinstall -y "Development Tools"
+    dnf install -y ${DEV_DNF_DEPS} ${ADDITIONAL_DEV_DNF_DEPS:-}
+    dnf clean all
 }
 
-function install_debian_runtime_dependencies() {
-    apt-get update
-    apt-get install --no-install-recommends -yqq apt-utils >/dev/null 2>&1
-    apt-get install -y --no-install-recommends curl gnupg2 lsb-release
-    # shellcheck disable=SC2086
-    export ${ADDITIONAL_RUNTIME_APT_ENV?}
-    if [[ "${RUNTIME_APT_COMMAND}" != "" ]]; then
-        bash -o pipefail -o errexit -o nounset -o nolog -c "${RUNTIME_APT_COMMAND}"
-    fi
-    if [[ "${ADDITIONAL_RUNTIME_APT_COMMAND}" != "" ]]; then
-        bash -o pipefail -o errexit -o nounset -o nolog -c "${ADDITIONAL_RUNTIME_APT_COMMAND}"
-    fi
-    apt-get update
-    # shellcheck disable=SC2086
-    apt-get install -y --no-install-recommends ${RUNTIME_APT_DEPS} ${ADDITIONAL_RUNTIME_APT_DEPS}
-    apt-get autoremove -yqq --purge
-    apt-get clean
-    rm -rf /var/lib/apt/lists/* /var/log/*
+function install_amazonlinux_runtime_dependencies() {
+    dnf makecache
+    dnf install -y ${RUNTIME_DNF_DEPS} ${ADDITIONAL_RUNTIME_DNF_DEPS:-}
+    dnf clean all
 }
 
 if [[ "${INSTALLATION_TYPE}" == "RUNTIME" ]]; then
-    get_runtime_apt_deps
-    install_debian_runtime_dependencies
+    get_runtime_dnf_deps
+    install_amazonlinux_runtime_dependencies
     install_docker_cli
-
 else
-    get_dev_apt_deps
-    install_debian_dev_dependencies
+    # get_dev_dnf_deps
+    install_amazonlinux_dev_dependencies
     install_docker_cli
 fi

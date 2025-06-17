@@ -31,9 +31,9 @@ install_postgres_client() {
     echo
 
     if [[ "${1}" == "dev" ]]; then
-        packages=("libpq-dev" "postgresql-client")
+        packages=("postgresql" "postgresql-devel")
     elif [[ "${1}" == "prod" ]]; then
-        packages=("postgresql-client")
+        packages=("postgresql")
     else
         echo
         echo "Specify either prod or dev"
@@ -41,14 +41,8 @@ install_postgres_client() {
         exit 1
     fi
 
-    common::import_trusted_gpg "7FCC7D46ACCC4CF8" "postgres"
-
-    echo "deb [arch=amd64,arm64] https://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" > \
-        /etc/apt/sources.list.d/pgdg.list
-    apt-get update
-    apt-get install --no-install-recommends -y "${packages[@]}"
-    apt-get autoremove -yqq --purge
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    dnf install -y "${packages[@]}"
+    dnf clean all
 }
 
 # Install Postgres client from Postgres repositories
