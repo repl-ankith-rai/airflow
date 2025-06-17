@@ -51,7 +51,7 @@ ARG AIRFLOW_VERSION="2.11.0"
 # You can swap comments between those two args to test pip from the main version
 # When you attempt to test if the version of `pip` from specified branch works for our builds
 # Also use `force pip` label on your PR to swap all places we use `uv` to `pip`
-ARG AIRFLOW_PIP_VERSION=25.1.1
+ARG AIRFLOW_PIP_VERSION=21.3.1
 ARG AIRFLOW_UV_VERSION=0.7.3
 ARG AIRFLOW_USE_UV="false"
 ARG UV_HTTP_TIMEOUT="300"
@@ -469,7 +469,7 @@ function common::get_packaging_tool() {
         echo
         export PACKAGING_TOOL="pip"
         export PACKAGING_TOOL_CMD="pip"
-        export EXTRA_INSTALL_FLAGS="--root-user-action ignore"
+        export EXTRA_INSTALL_FLAGS=""
         export EXTRA_UNINSTALL_FLAGS="--yes"
         export UPGRADE_EAGERLY="--upgrade --upgrade-strategy eager"
         export UPGRADE_IF_NEEDED="--upgrade --upgrade-strategy only-if-needed"
@@ -540,7 +540,7 @@ function common::install_packaging_tools() {
         echo "${COLOR_BLUE}Installing pip version from spec ${AIRFLOW_PIP_VERSION}${COLOR_RESET}"
         echo
         # shellcheck disable=SC2086
-        pip install --root-user-action ignore --disable-pip-version-check "pip @ ${AIRFLOW_PIP_VERSION}"
+        python -m pip install --disable-pip-version-check "pip @ ${AIRFLOW_PIP_VERSION}"
     else
         local installed_pip_version
         installed_pip_version=$(python -c 'from importlib.metadata import version; print(version("pip"))')
@@ -549,7 +549,7 @@ function common::install_packaging_tools() {
             echo "${COLOR_BLUE}(Re)Installing pip version: ${AIRFLOW_PIP_VERSION}${COLOR_RESET}"
             echo
             # shellcheck disable=SC2086
-            pip install --root-user-action ignore --disable-pip-version-check "pip==${AIRFLOW_PIP_VERSION}"
+            python -m pip install --disable-pip-version-check "pip==${AIRFLOW_PIP_VERSION}"
         fi
     fi
     if [[ ! ${AIRFLOW_UV_VERSION} =~ [0-9.]* ]]; then
@@ -557,7 +557,7 @@ function common::install_packaging_tools() {
         echo "${COLOR_BLUE}Installing uv version from spec ${AIRFLOW_UV_VERSION}${COLOR_RESET}"
         echo
         # shellcheck disable=SC2086
-        pip install --root-user-action ignore --disable-pip-version-check "uv @ ${AIRFLOW_UV_VERSION}"
+        pip install --disable-pip-version-check "uv @ ${AIRFLOW_UV_VERSION}"
     else
         local installed_uv_version
         installed_uv_version=$(python -c 'from importlib.metadata import version; print(version("uv"))' 2>/dev/null || echo "Not installed yet")
@@ -566,7 +566,7 @@ function common::install_packaging_tools() {
             echo "${COLOR_BLUE}(Re)Installing uv version: ${AIRFLOW_UV_VERSION}${COLOR_RESET}"
             echo
             # shellcheck disable=SC2086
-            pip install --root-user-action ignore --disable-pip-version-check "uv==${AIRFLOW_UV_VERSION}"
+            pip install --disable-pip-version-check "uv==${AIRFLOW_UV_VERSION}"
         fi
     fi
     # make sure that the venv/user in .local exists
@@ -1317,6 +1317,9 @@ RUN dnf update -y && \
     dnf install -y \
         python3.9 \
         python3.9-devel \
+        python3-pip \
+        python3-wheel \
+        python3-setuptools \
         gcc \
         gcc-c++ \
         git \
@@ -1338,7 +1341,10 @@ RUN dnf update -y && \
         cyrus-sasl-devel \
         freetds-devel \
         findutils \
+        which \
         && \
+    alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
+    alternatives --set python /usr/bin/python3.9 && \
     dnf clean all && \
     rm -rf /var/cache/dnf/*
 
@@ -1378,7 +1384,9 @@ ARG AIRFLOW_UID
 RUN dnf update -y && \
     # Create AIRFLOW_USER_HOME_DIR first and set permissions
     mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
-    # Use useradd instead of adduser for AL2023 compatibility 
+    # Use userdel first to ensure clean state
+    userdel -r airflow 2>/dev/null || true && \
+    # Use useradd for AL2023 compatibility 
     useradd --uid "${AIRFLOW_UID}" \
             --home "${AIRFLOW_USER_HOME_DIR}" \
             --shell /bin/bash \
@@ -1558,26 +1566,21 @@ RUN --mount=type=cache,id=prod-$TARGETARCH-$DEPENDENCY_CACHE_EPOCH,target=/tmp/.
 ##############################################################################################
 FROM ${PYTHON_BASE_IMAGE} as main
 
-# Nolog bash flag is currently ignored - but you can replace it with other flags (for example
-# xtrace - to show commands executed)
 SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-o", "nounset", "-o", "nolog", "-c"]
 
-ARG AIRFLOW_UID
-
-LABEL org.apache.airflow.distro="debian" \
-  org.apache.airflow.module="airflow" \
-  org.apache.airflow.component="airflow" \
-  org.apache.airflow.image="airflow" \
-  org.apache.airflow.uid="${AIRFLOW_UID}"
-
 ARG PYTHON_BASE_IMAGE
+ARG AIRFLOW_HOME=/opt/airflow
+ARG AIRFLOW_USER_HOME_DIR=/home/airflow
+ARG AIRFLOW_UID="50000"
 
 ENV PYTHON_BASE_IMAGE=${PYTHON_BASE_IMAGE} \
-    # Make sure noninteractive debian install is used and language variables set
     DEBIAN_FRONTEND=noninteractive LANGUAGE=C.UTF-8 LANG=C.UTF-8 LC_ALL=C.UTF-8 \
     LC_CTYPE=C.UTF-8 LC_MESSAGES=C.UTF-8 LD_LIBRARY_PATH=/usr/local/lib \
     PIP_CACHE_DIR=/tmp/.cache/pip \
-    UV_CACHE_DIR=/tmp/.cache/uv
+    UV_CACHE_DIR=/tmp/.cache/uv \
+    AIRFLOW_HOME=${AIRFLOW_HOME} \
+    AIRFLOW_USER_HOME_DIR=${AIRFLOW_USER_HOME_DIR} \
+    AIRFLOW_UID=${AIRFLOW_UID}
 
 ARG RUNTIME_APT_DEPS=""
 ARG ADDITIONAL_RUNTIME_APT_DEPS=""
@@ -1597,13 +1600,16 @@ ENV RUNTIME_APT_DEPS=${RUNTIME_APT_DEPS} \
     INSTALL_MYSQL_CLIENT_TYPE=${INSTALL_MYSQL_CLIENT_TYPE} \
     INSTALL_MSSQL_CLIENT=${INSTALL_MSSQL_CLIENT} \
     INSTALL_POSTGRES_CLIENT=${INSTALL_POSTGRES_CLIENT} \
-    GUNICORN_CMD_ARGS="--worker-tmp-dir /dev/shm" \
-    AIRFLOW_INSTALLATION_METHOD=${AIRFLOW_INSTALLATION_METHOD}
+    GUNICORN_CMD_ARGS="--worker-tmp-dir /dev/shm"
 
 COPY --from=scripts install_os_dependencies.sh /scripts/docker/
 RUN dnf update -y && \
     dnf install -y \
         python3.9 \
+        python3.9-devel \
+        python3-pip \
+        python3-wheel \
+        python3-setuptools \
         openssl \
         libffi \
         krb5-libs \
@@ -1617,12 +1623,22 @@ RUN dnf update -y && \
         cyrus-sasl \
         freetds \
         findutils \
+        which \
         && \
+    alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
+    alternatives --set python /usr/bin/python3.9 && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/* && \
+    # Install MSSQL client
+    curl https://packages.microsoft.com/config/rhel/9/prod.repo > /etc/yum.repos.d/mssql-release.repo && \
+    ACCEPT_EULA=Y dnf install -y msodbcsql18 unixODBC-devel && \
     dnf clean all && \
     rm -rf /var/cache/dnf/* && \
     # Create AIRFLOW_USER_HOME_DIR first
     mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
-    # Use useradd instead of adduser for AL2023 compatibility 
+    # Remove existing airflow user if it exists
+    userdel -r airflow 2>/dev/null || true && \
+    # Create new airflow user
     useradd --uid "${AIRFLOW_UID}" \
             --home "${AIRFLOW_USER_HOME_DIR}" \
             --shell /bin/bash \
@@ -1641,15 +1657,10 @@ RUN dnf update -y && \
 ARG AIRFLOW_INSTALLATION_METHOD="apache-airflow"
 ARG AIRFLOW_IMAGE_REPOSITORY
 ARG AIRFLOW_IMAGE_README_URL
-ARG AIRFLOW_USER_HOME_DIR
-ARG AIRFLOW_HOME
 
 # By default PIP installs everything to ~/.local
 ENV PATH="${AIRFLOW_USER_HOME_DIR}/.local/bin:${PATH}" \
-    VIRTUAL_ENV="${AIRFLOW_USER_HOME_DIR}/.local" \
-    AIRFLOW_UID=${AIRFLOW_UID} \
-    AIRFLOW_USER_HOME_DIR=${AIRFLOW_USER_HOME_DIR} \
-    AIRFLOW_HOME=${AIRFLOW_HOME}
+    VIRTUAL_ENV="${AIRFLOW_USER_HOME_DIR}/.local"
 
 COPY --from=scripts common.sh /scripts/docker/
 
@@ -1666,7 +1677,9 @@ COPY --from=scripts common.sh /scripts/docker/
 RUN dnf update -y && \
     # Create AIRFLOW_USER_HOME_DIR first and set permissions
     mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
-    # Use useradd instead of adduser for AL2023 compatibility 
+    # Use userdel first to ensure clean state
+    userdel -r airflow 2>/dev/null || true && \
+    # Use useradd for AL2023 compatibility 
     useradd --uid "${AIRFLOW_UID}" \
             --home "${AIRFLOW_USER_HOME_DIR}" \
             --shell /bin/bash \
