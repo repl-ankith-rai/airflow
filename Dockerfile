@@ -51,7 +51,7 @@ ARG AIRFLOW_VERSION="2.11.0"
 # You can swap comments between those two args to test pip from the main version
 # When you attempt to test if the version of `pip` from specified branch works for our builds
 # Also use `force pip` label on your PR to swap all places we use `uv` to `pip`
-ARG AIRFLOW_PIP_VERSION=21.3.1
+ARG AIRFLOW_PIP_VERSION=23.3.2
 ARG AIRFLOW_UV_VERSION=0.7.3
 ARG AIRFLOW_USE_UV="false"
 ARG UV_HTTP_TIMEOUT="300"
@@ -945,8 +945,12 @@ AIRFLOW_COMMAND="${1:-}"
 
 set -euo pipefail
 
-LD_PRELOAD="/usr/lib/$(uname -m)-linux-gnu/libstdc++.so.6"
-export LD_PRELOAD
+# Update LD_PRELOAD path for Amazon Linux - only if file exists
+if [ -f "/usr/lib64/libstdc++.so.6" ]; then
+    LD_PRELOAD="/usr/lib64/libstdc++.so.6"
+    export LD_PRELOAD
+fi
+
 
 function run_check_with_retries {
     local cmd
@@ -1712,6 +1716,8 @@ COPY --from=scripts airflow-scheduler-autorestart.sh /airflow-scheduler-autorest
 RUN chmod a+rx /entrypoint /clean-logs \
     && chmod g=u /etc/passwd \
     && chmod g+w "${AIRFLOW_USER_HOME_DIR}/.local" \
+    && chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}/.local" \
+    && chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}/.local" \
     && usermod -g 0 airflow -G 0
 
 # make sure that the venv is activated for all users
