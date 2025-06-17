@@ -26,7 +26,6 @@ declare -a packages
 
 : "${INSTALL_MSSQL_CLIENT:?Should be true or false}"
 
-
 function install_mssql_client() {
     # Install MsSQL client from Microsoft repositories
     if [[ ${INSTALL_MSSQL_CLIENT:="true"} != "true" ]]; then
@@ -35,22 +34,20 @@ function install_mssql_client() {
         echo
         return
     fi
-    packages=("msodbcsql18")
-
-    common::import_trusted_gpg "EB3E94ADBE1229CF" "microsoft"
 
     echo
     echo "${COLOR_BLUE}Installing mssql client${COLOR_RESET}"
     echo
 
-    echo "deb [arch=amd64,arm64] https://packages.microsoft.com/debian/$(lsb_release -rs)/prod $(lsb_release -cs) main" > \
-        /etc/apt/sources.list.d/mssql-release.list
-    apt-get update -yqq
-    apt-get upgrade -yqq
-    ACCEPT_EULA=Y apt-get -yqq install --no-install-recommends "${packages[@]}"
-    rm -rf /var/lib/apt/lists/*
-    apt-get autoremove -yqq --purge
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    # Add Microsoft repository for RHEL/CentOS 9
+    curl -o /etc/yum.repos.d/mssql-release.repo https://packages.microsoft.com/config/rhel/9/prod.repo
+
+    # Install ODBC packages
+    ACCEPT_EULA=Y dnf install -y msodbcsql18 unixODBC-devel
+
+    # Clean up
+    dnf clean all
+    rm -rf /var/cache/dnf/*
 }
 
 install_mssql_client "${@}"

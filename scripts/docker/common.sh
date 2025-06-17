@@ -36,10 +36,10 @@ function common::get_packaging_tool() {
     : "${AIRFLOW_UV_VERSION:?Should be set}"
     : "${AIRFLOW_USE_UV:?Should be set}"
 
-    ## IMPORTANT: IF YOU MODIFY THIS FUNCTION YOU SHOULD ALSO MODIFY CORRESPONDING FUNCTION IN
-    ## `scripts/in_container/_in_container_utils.sh`
+    # Get correct Python path for Amazon Linux
     local PYTHON_BIN
-    PYTHON_BIN=$(which python)
+    PYTHON_BIN=$(which python3)
+
     if [[ ${AIRFLOW_USE_UV} == "true" ]]; then
         echo
         echo "${COLOR_BLUE}Using 'uv' to install Airflow${COLOR_RESET}"
@@ -91,7 +91,7 @@ function common::get_constraints_location() {
     if [[ -z ${AIRFLOW_CONSTRAINTS_LOCATION=} ]]; then
         local constraints_base="https://raw.githubusercontent.com/${CONSTRAINTS_GITHUB_REPOSITORY}/${AIRFLOW_CONSTRAINTS_REFERENCE}"
         local python_version
-        python_version=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+        python_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
         AIRFLOW_CONSTRAINTS_LOCATION="${constraints_base}/${AIRFLOW_CONSTRAINTS_MODE}-${python_version}.txt"
     fi
 
@@ -126,9 +126,10 @@ function common::install_packaging_tools() {
         echo
     else
         echo
-        echo "${COLOR_BLUE}Checking packaging tools for system Python installation: $(which python)${COLOR_RESET}"
+        echo "${COLOR_BLUE}Checking packaging tools for system Python installation: $(which python3)${COLOR_RESET}"
         echo
     fi
+
     if [[ ! ${AIRFLOW_PIP_VERSION} =~ [0-9.]* ]]; then
         echo
         echo "${COLOR_BLUE}Installing pip version from spec ${AIRFLOW_PIP_VERSION}${COLOR_RESET}"
@@ -137,7 +138,7 @@ function common::install_packaging_tools() {
         pip install --root-user-action ignore --disable-pip-version-check "pip @ ${AIRFLOW_PIP_VERSION}"
     else
         local installed_pip_version
-        installed_pip_version=$(python -c 'from importlib.metadata import version; print(version("pip"))')
+        installed_pip_version=$(python3 -c 'from importlib.metadata import version; print(version("pip"))')
         if [[ ${installed_pip_version} != "${AIRFLOW_PIP_VERSION}" ]]; then
             echo
             echo "${COLOR_BLUE}(Re)Installing pip version: ${AIRFLOW_PIP_VERSION}${COLOR_RESET}"
@@ -146,6 +147,7 @@ function common::install_packaging_tools() {
             pip install --root-user-action ignore --disable-pip-version-check "pip==${AIRFLOW_PIP_VERSION}"
         fi
     fi
+
     if [[ ! ${AIRFLOW_UV_VERSION} =~ [0-9.]* ]]; then
         echo
         echo "${COLOR_BLUE}Installing uv version from spec ${AIRFLOW_UV_VERSION}${COLOR_RESET}"
@@ -154,7 +156,7 @@ function common::install_packaging_tools() {
         pip install --root-user-action ignore --disable-pip-version-check "uv @ ${AIRFLOW_UV_VERSION}"
     else
         local installed_uv_version
-        installed_uv_version=$(python -c 'from importlib.metadata import version; print(version("uv"))' 2>/dev/null || echo "Not installed yet")
+        installed_uv_version=$(python3 -c 'from importlib.metadata import version; print(version("uv"))' 2>/dev/null || echo "Not installed yet")
         if [[ ${installed_uv_version} != "${AIRFLOW_UV_VERSION}" ]]; then
             echo
             echo "${COLOR_BLUE}(Re)Installing uv version: ${AIRFLOW_UV_VERSION}${COLOR_RESET}"
@@ -163,6 +165,7 @@ function common::install_packaging_tools() {
             pip install --root-user-action ignore --disable-pip-version-check "uv==${AIRFLOW_UV_VERSION}"
         fi
     fi
+
     # make sure that the venv/user in .local exists
     mkdir -p "${HOME}/.local/bin"
 }

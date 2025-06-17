@@ -35,7 +35,8 @@
 #                        all the build essentials. This makes the image
 #                        much smaller.
 #
-# Use the same builder frontend version for everyone
+# Use Amazon Linux 2023 with Python 3.9
+ARG PYTHON_BASE_IMAGE="public.ecr.aws/amazonlinux/amazonlinux:2023"
 ARG AIRFLOW_EXTRAS="aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,docker,elasticsearch,fab,ftp,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv,virtualenv"
 ARG ADDITIONAL_AIRFLOW_EXTRAS=""
 ARG ADDITIONAL_PYTHON_DEPS=""
@@ -47,14 +48,10 @@ ARG AIRFLOW_USER_HOME_DIR=/home/airflow
 # latest released version here
 ARG AIRFLOW_VERSION="2.11.0"
 
-ARG PYTHON_BASE_IMAGE="python:3.9-slim-bookworm"
-
-
 # You can swap comments between those two args to test pip from the main version
 # When you attempt to test if the version of `pip` from specified branch works for our builds
 # Also use `force pip` label on your PR to swap all places we use `uv` to `pip`
 ARG AIRFLOW_PIP_VERSION=25.1.1
-# ARG AIRFLOW_PIP_VERSION="git+https://github.com/pypa/pip.git@main"
 ARG AIRFLOW_UV_VERSION=0.7.3
 ARG AIRFLOW_USE_UV="false"
 ARG UV_HTTP_TIMEOUT="300"
@@ -135,7 +132,7 @@ function get_runtime_apt_deps() {
     echo
     if [[ "${RUNTIME_APT_DEPS=}" == "" ]]; then
         RUNTIME_APT_DEPS="apt-transport-https apt-utils ca-certificates \
-curl dumb-init freetds-bin krb5-user libev4 libgeos-dev \
+curl freetds-bin krb5-user libev4 libgeos-dev \
 ldap-utils libsasl2-2 libsasl2-modules libxmlsec1 locales ${debian_version_apt_deps} \
 lsb-release openssh-client python3-selinux rsync sasl2-bin sqlite3 sudo unixodbc"
         export RUNTIME_APT_DEPS
@@ -1208,7 +1205,7 @@ if [[ -n "${_AIRFLOW_WWW_USER_CREATE=}" ]] ; then
     create_www_user
 fi
 
-if [[ -n "${_PIP_ADDITIONAL_REQUIREMENTS=}" ]] ; then
+if [[ -n "${_PIP_ADDITIONAL_REQUIREMENTS=}" ]]; then
     >&2 echo
     >&2 echo "!!!!!  Installing additional requirements: '${_PIP_ADDITIONAL_REQUIREMENTS}' !!!!!!!!!!!!"
     >&2 echo
@@ -1316,11 +1313,43 @@ ENV DEV_APT_DEPS=${DEV_APT_DEPS} \
     ADDITIONAL_DEV_APT_ENV=${ADDITIONAL_DEV_APT_ENV}
 
 COPY --from=scripts install_os_dependencies.sh /scripts/docker/
-RUN bash /scripts/docker/install_os_dependencies.sh dev
+RUN dnf update -y && \
+    dnf install -y \
+        python3.9 \
+        python3.9-devel \
+        gcc \
+        gcc-c++ \
+        git \
+        wget \
+        tar \
+        gzip \
+        make \
+        openssl-devel \
+        libffi-devel \
+        zlib-devel \
+        krb5-devel \
+        openldap-devel \
+        sqlite-devel \
+        unixODBC-devel \
+        libxml2-devel \
+        libxslt-devel \
+        postgresql-devel \
+        mariadb-connector-c-devel \
+        cyrus-sasl-devel \
+        freetds-devel \
+        findutils \
+        && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
 
-ARG INSTALL_MYSQL_CLIENT="true"
+RUN curl https://packages.microsoft.com/config/rhel/9/prod.repo > /etc/yum.repos.d/mssql-release.repo && \
+    ACCEPT_EULA=Y dnf install -y msodbcsql18 unixODBC-devel && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
+
+ARG INSTALL_MYSQL_CLIENT="false"
 ARG INSTALL_MYSQL_CLIENT_TYPE="mariadb"
-ARG INSTALL_MSSQL_CLIENT="true"
+ARG INSTALL_MSSQL_CLIENT="false"
 ARG INSTALL_POSTGRES_CLIENT="true"
 
 ENV INSTALL_MYSQL_CLIENT=${INSTALL_MYSQL_CLIENT} \
@@ -1330,14 +1359,14 @@ ENV INSTALL_MYSQL_CLIENT=${INSTALL_MYSQL_CLIENT} \
 
 COPY --from=scripts common.sh /scripts/docker/
 
-# Only copy mysql/mssql installation scripts for now - so that changing the other
-# scripts which are needed much later will not invalidate the docker layer here
-COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
+# # Only copy mysql/mssql installation scripts for now - so that changing the other
+# # scripts which are needed much later will not invalidate the docker layer here
+# COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
 
-RUN bash /scripts/docker/install_mysql.sh dev && \
-    bash /scripts/docker/install_mssql.sh dev && \
-    bash /scripts/docker/install_postgres.sh dev
-ENV PATH=${PATH}:/opt/mssql-tools/bin
+# RUN bash /scripts/docker/install_mysql.sh dev && \
+#     bash /scripts/docker/install_mssql.sh dev && \
+#     bash /scripts/docker/install_postgres.sh dev
+# ENV PATH=${PATH}:/opt/mssql-tools/bin
 
 # By default we do not install from docker context files but if we decide to install from docker context
 # files, we should override those variables to "docker-context-files"
@@ -1346,9 +1375,22 @@ ARG AIRFLOW_HOME
 ARG AIRFLOW_USER_HOME_DIR
 ARG AIRFLOW_UID
 
-RUN adduser --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password \
-       --quiet "airflow" --uid "${AIRFLOW_UID}" --gid "0" --home "${AIRFLOW_USER_HOME_DIR}" && \
-    mkdir -p ${AIRFLOW_HOME} && chown -R "airflow:0" "${AIRFLOW_USER_HOME_DIR}" ${AIRFLOW_HOME}
+RUN dnf update -y && \
+    # Create AIRFLOW_USER_HOME_DIR first and set permissions
+    mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
+    # Use useradd instead of adduser for AL2023 compatibility 
+    useradd --uid "${AIRFLOW_UID}" \
+            --home "${AIRFLOW_USER_HOME_DIR}" \
+            --shell /bin/bash \
+            --system \
+            --create-home \
+            airflow && \
+    mkdir -pv "${AIRFLOW_HOME}" && \
+    mkdir -pv "${AIRFLOW_HOME}/dags" && \
+    mkdir -pv "${AIRFLOW_HOME}/logs" && \
+    chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
 
 COPY --chown=${AIRFLOW_UID}:0 ${DOCKER_CONTEXT_FILES} /docker-context-files
 
@@ -1496,10 +1538,10 @@ RUN --mount=type=cache,id=prod-$TARGETARCH-$DEPENDENCY_CACHE_EPOCH,target=/tmp/.
         bash /scripts/docker/install_additional_dependencies.sh; \
     fi; \
     find "${AIRFLOW_USER_HOME_DIR}/.local/" -name '*.pyc' -print0 | xargs -0 rm -f || true ; \
-    find "${AIRFLOW_USER_HOME_DIR}/.local/" -type d -name '__pycache__' -print0 | xargs -0 rm -rf || true ; \
+    find "${AIRFLOW_USER_HOME_DIR}/.local/" -type d -name '__pycache__' -print0 | xargs -0 rm -rf || true ;
     # make sure that all directories and files in .local are also group accessible
-    find "${AIRFLOW_USER_HOME_DIR}/.local" -executable ! -type l -print0 | xargs --null chmod g+x; \
-    find "${AIRFLOW_USER_HOME_DIR}/.local" ! -type l -print0 | xargs --null chmod g+rw
+    # find "${AIRFLOW_USER_HOME_DIR}/.local" -executable ! -type l -print0 | xargs --null chmod g+x; \
+    # find "${AIRFLOW_USER_HOME_DIR}/.local" ! -type l -print0 | xargs --null chmod g+rw
 
 # In case there is a requirements.txt file in "docker-context-files" it will be installed
 # during the build additionally to whatever has been installed so far. It is recommended that
@@ -1559,7 +1601,40 @@ ENV RUNTIME_APT_DEPS=${RUNTIME_APT_DEPS} \
     AIRFLOW_INSTALLATION_METHOD=${AIRFLOW_INSTALLATION_METHOD}
 
 COPY --from=scripts install_os_dependencies.sh /scripts/docker/
-RUN bash /scripts/docker/install_os_dependencies.sh runtime
+RUN dnf update -y && \
+    dnf install -y \
+        python3.9 \
+        openssl \
+        libffi \
+        krb5-libs \
+        openldap \
+        sqlite \
+        unixODBC \
+        libxml2 \
+        libxslt \
+        postgresql-libs \
+        mariadb-connector-c \
+        cyrus-sasl \
+        freetds \
+        findutils \
+        && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/* && \
+    # Create AIRFLOW_USER_HOME_DIR first
+    mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
+    # Use useradd instead of adduser for AL2023 compatibility 
+    useradd --uid "${AIRFLOW_UID}" \
+            --home "${AIRFLOW_USER_HOME_DIR}" \
+            --shell /bin/bash \
+            --system \
+            --create-home \
+            airflow && \
+    mkdir -pv "${AIRFLOW_HOME}" && \
+    mkdir -pv "${AIRFLOW_HOME}/dags" && \
+    mkdir -pv "${AIRFLOW_HOME}/logs" && \
+    chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
 
 # Having the variable in final image allows to disable providers manager warnings when
 # production image is prepared from sources rather than from package
@@ -1578,30 +1653,32 @@ ENV PATH="${AIRFLOW_USER_HOME_DIR}/.local/bin:${PATH}" \
 
 COPY --from=scripts common.sh /scripts/docker/
 
-# Only copy mysql/mssql installation scripts for now - so that changing the other
-# scripts which are needed much later will not invalidate the docker layer here.
-COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
-# We run scripts with bash here to make sure we can execute the scripts. Changing to +x might have an
-# unexpected result - the cache for Dockerfiles might get invalidated in case the host system
-# had different umask set and group x bit was not set. In Azure the bit might be not set at all.
-# That also protects against AUFS Docker backend problem where changing the executable bit required sync
-RUN bash /scripts/docker/install_mysql.sh prod \
-    && bash /scripts/docker/install_mssql.sh prod \
-    && bash /scripts/docker/install_postgres.sh prod \
-    && adduser --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password \
-           --quiet "airflow" --uid "${AIRFLOW_UID}" --gid "0" --home "${AIRFLOW_USER_HOME_DIR}" \
-# Make Airflow files belong to the root group and are accessible. This is to accommodate the guidelines from
-# OpenShift https://docs.openshift.com/enterprise/3.0/creating_images/guidelines.html
-    && mkdir -pv "${AIRFLOW_HOME}" \
-    && mkdir -pv "${AIRFLOW_HOME}/dags" \
-    && mkdir -pv "${AIRFLOW_HOME}/logs" \
-    && chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" \
-    && chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" \
-    && find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x \
-    && find "${AIRFLOW_USER_HOME_DIR}" -executable ! -type l -print0 | xargs --null chmod g+x
-
-ARG AIRFLOW_SOURCES_FROM
-ARG AIRFLOW_SOURCES_TO
+# # Only copy mysql/mssql installation scripts for now - so that changing the other
+# # scripts which are needed much later will not invalidate the docker layer here.
+# COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
+# # We run scripts with bash here to make sure we can execute the scripts. Changing to +x might have an
+# # unexpected result - the cache for Dockerfiles might get invalidated in case the host system
+# # had different umask set and group x bit was not set. In Azure the bit might be not set at all.
+# # That also protects against AUFS Docker backend problem where changing the executable bit required sync
+# RUN bash /scripts/docker/install_mysql.sh prod && \
+#     bash /scripts/docker/install_mssql.sh prod && \
+#     bash /scripts/docker/install_postgres.sh prod && \
+RUN dnf update -y && \
+    # Create AIRFLOW_USER_HOME_DIR first and set permissions
+    mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
+    # Use useradd instead of adduser for AL2023 compatibility 
+    useradd --uid "${AIRFLOW_UID}" \
+            --home "${AIRFLOW_USER_HOME_DIR}" \
+            --shell /bin/bash \
+            --system \
+            --create-home \
+            airflow && \
+    mkdir -pv "${AIRFLOW_HOME}" && \
+    mkdir -pv "${AIRFLOW_HOME}/dags" && \
+    mkdir -pv "${AIRFLOW_HOME}/logs" && \
+    chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
 
 COPY --from=airflow-build-image --chown=airflow:0 \
      "${AIRFLOW_USER_HOME_DIR}/.local" "${AIRFLOW_USER_HOME_DIR}/.local"

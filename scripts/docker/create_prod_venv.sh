@@ -21,9 +21,13 @@
 
 function create_prod_venv() {
     echo
+    echo "${COLOR_BLUE}Installing Python virtualenv package${COLOR_RESET}"
+    dnf install -y python3-virtualenv
+
+    echo
     echo "${COLOR_BLUE}Removing ${HOME}/.local and re-creating it as virtual environment.${COLOR_RESET}"
     rm -rf ~/.local
-    python -m venv ~/.local
+    python3 -m venv ~/.local
     echo "${COLOR_BLUE}The ${HOME}/.local virtualenv created.${COLOR_RESET}"
 }
 

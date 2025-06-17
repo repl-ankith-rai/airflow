@@ -20,14 +20,8 @@ AIRFLOW_COMMAND="${1:-}"
 
 set -euo pipefail
 
-# This one is to workaround https://github.com/apache/airflow/issues/17546
-# issue with /usr/lib/<MACHINE>-linux-gnu/libstdc++.so.6: cannot allocate memory in static TLS block
-# We do not yet a more "correct" solution to the problem but in order to avoid raising new issues
-# by users of the prod image, we implement the workaround now.
-# The side effect of this is slightly (in the range of 100s of milliseconds) slower load for any
-# binary started and a little memory used for Heap allocated by initialization of libstdc++
-# This overhead is not happening for binaries that already link dynamically libstdc++
-LD_PRELOAD="/usr/lib/$(uname -m)-linux-gnu/libstdc++.so.6"
+# Update LD_PRELOAD path for Amazon Linux
+LD_PRELOAD="/usr/lib64/libstdc++.so.6"
 export LD_PRELOAD
 
 function run_check_with_retries {
@@ -162,13 +156,7 @@ function create_www_user() {
 }
 
 function create_system_user_if_missing() {
-    # This is needed in case of OpenShift-compatible container execution. In case of OpenShift random
-    # User id is used when starting the image, however group 0 is kept as the user group. Our production
-    # Image is OpenShift compatible, so all permissions on all folders are set so that 0 group can exercise
-    # the same privileges as the default "airflow" user, this code checks if the user is already
-    # present in /etc/passwd and will create the system user dynamically, including setting its
-    # HOME directory to the /home/airflow so that (for example) the ${HOME}/.local folder where airflow is
-    # Installed can be automatically added to PYTHONPATH
+    # For Amazon Linux 2023 OpenShift compatibility
     if ! whoami &> /dev/null; then
       if [[ -w /etc/passwd ]]; then
         echo "${USER_NAME:-default}:x:$(id -u):0:${USER_NAME:-default} user:${AIRFLOW_USER_HOME_DIR}:/sbin/nologin" \
