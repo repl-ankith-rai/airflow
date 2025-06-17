@@ -1716,8 +1716,9 @@ RUN chmod a+rx /entrypoint /clean-logs \
 
 # make sure that the venv is activated for all users
 # including plain sudo, sudo with --interactive flag
-RUN sed --in-place=.bak "s/secure_path=\"/secure_path=\"$(echo -n ${AIRFLOW_USER_HOME_DIR} | \
-        sed 's/\//\\\//g')\/.local\/bin:/" /etc/sudoers
+RUN if [ -f /etc/sudoers ]; then \
+    sed --in-place=.bak "s/secure_path=\"/secure_path=\"$(echo -n ${AIRFLOW_USER_HOME_DIR} | sed 's/\//\\\//g')\/.local\/bin:/" /etc/sudoers; \
+  fi
 
 ARG AIRFLOW_VERSION
 ARG AIRFLOW_PIP_VERSION
