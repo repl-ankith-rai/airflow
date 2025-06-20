@@ -36,7 +36,7 @@
 #                        much smaller.
 #
 # Use Amazon Linux 2023 with Python 3.9
-ARG PYTHON_BASE_IMAGE="public.ecr.aws/amazonlinux/amazonlinux:2023"
+ARG PYTHON_BASE_IMAGE="434423891815.dkr.ecr.us-east-1.amazonaws.com/machine-images/fips-base:m-16871-amazon-linux-2023-python-3-9-amd64"
 ARG AIRFLOW_EXTRAS="aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,docker,elasticsearch,fab,ftp,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv,virtualenv"
 ARG ADDITIONAL_AIRFLOW_EXTRAS=""
 ARG ADDITIONAL_PYTHON_DEPS=""
