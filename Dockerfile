@@ -87,6 +87,40 @@ FROM scratch as scripts
 # make the PROD Dockerfile standalone
 ##############################################################################################
 
+# Added script for user creation
+COPY <<"EOF" /create_airflow_user.sh
+#!/usr/bin/env bash
+# This script creates the airflow user and directories with proper permissions
+
+set -euo pipefail
+
+: "${AIRFLOW_USER_HOME_DIR:?AIRFLOW_USER_HOME_DIR must be set}"
+: "${AIRFLOW_HOME:?AIRFLOW_HOME must be set}"
+: "${AIRFLOW_UID:?AIRFLOW_UID must be set}"
+
+# Create AIRFLOW_USER_HOME_DIR first
+mkdir -p "${AIRFLOW_USER_HOME_DIR}"
+
+# Use userdel first to ensure clean state
+userdel -r airflow 2>/dev/null || true
+
+# Use useradd for Amazon Linux 2023 compatibility 
+useradd --uid "${AIRFLOW_UID}" \
+        --home "${AIRFLOW_USER_HOME_DIR}" \
+        --shell /bin/bash \
+        --system \
+        --create-home \
+        airflow
+
+mkdir -pv "${AIRFLOW_HOME}"
+mkdir -pv "${AIRFLOW_HOME}/dags"
+mkdir -pv "${AIRFLOW_HOME}/logs"
+
+chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}"
+chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}"
+find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
+EOF
+
 # The content below is automatically copied from scripts/docker/install_os_dependencies.sh
 COPY <<"EOF" /install_os_dependencies.sh
 #!/usr/bin/env bash
@@ -1386,24 +1420,9 @@ ARG AIRFLOW_HOME
 ARG AIRFLOW_USER_HOME_DIR
 ARG AIRFLOW_UID
 
-RUN dnf update -y && \
-    # Create AIRFLOW_USER_HOME_DIR first and set permissions
-    mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
-    # Use userdel first to ensure clean state
-    userdel -r airflow 2>/dev/null || true && \
-    # Use useradd for AL2023 compatibility 
-    useradd --uid "${AIRFLOW_UID}" \
-            --home "${AIRFLOW_USER_HOME_DIR}" \
-            --shell /bin/bash \
-            --system \
-            --create-home \
-            airflow && \
-    mkdir -pv "${AIRFLOW_HOME}" && \
-    mkdir -pv "${AIRFLOW_HOME}/dags" && \
-    mkdir -pv "${AIRFLOW_HOME}/logs" && \
-    chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
-    chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
-    find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
+# Copy user creation script to build image
+COPY --from=scripts create_airflow_user.sh /
+RUN dnf update -y && bash /create_airflow_user.sh
 
 COPY --chown=${AIRFLOW_UID}:0 ${DOCKER_CONTEXT_FILES} /docker-context-files
 
@@ -1646,23 +1665,8 @@ RUN dnf update -y && \
     ACCEPT_EULA=Y dnf install -y msodbcsql18 unixODBC-devel && \
     dnf clean all && \
     rm -rf /var/cache/dnf/* && \
-    # Create AIRFLOW_USER_HOME_DIR first
-    mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
-    # Remove existing airflow user if it exists
-    userdel -r airflow 2>/dev/null || true && \
-    # Create new airflow user
-    useradd --uid "${AIRFLOW_UID}" \
-            --home "${AIRFLOW_USER_HOME_DIR}" \
-            --shell /bin/bash \
-            --system \
-            --create-home \
-            airflow && \
-    mkdir -pv "${AIRFLOW_HOME}" && \
-    mkdir -pv "${AIRFLOW_HOME}/dags" && \
-    mkdir -pv "${AIRFLOW_HOME}/logs" && \
-    chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
-    chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
-    find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
+    # Copy user creation script and create airflow user
+    bash /create_airflow_user.sh
 
 # Having the variable in final image allows to disable providers manager warnings when
 # production image is prepared from sources rather than from package
@@ -1794,8 +1798,25 @@ LABEL org.apache.airflow.distro="debian" \
   org.opencontainers.image.title="Production Airflow Image" \
   org.opencontainers.image.description="Reference, production-ready Apache Airflow image"
 
-RUN curl -L -o /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64 && \
-    chmod +x /usr/local/bin/dumb-init
+# Install dumb-init with proper architecture detection
+RUN ARCH=$(uname -m) && \
+    DUMB_INIT_VERSION="1.2.5" && \
+    if [[ "${ARCH}" == "x86_64" ]]; then \
+        DUMB_INIT_ARCH="amd64"; \
+    elif [[ "${ARCH}" == "aarch64" ]]; then \
+        DUMB_INIT_ARCH="arm64"; \
+    else \
+        DUMB_INIT_ARCH="${ARCH}"; \
+    fi && \
+    DUMB_INIT_URL="https://github.com/Yelp/dumb-init/releases/download/v${DUMB_INIT_VERSION}/dumb-init_${DUMB_INIT_VERSION}_${DUMB_INIT_ARCH}" && \
+    echo "Installing dumb-init from ${DUMB_INIT_URL}" && \
+    curl -L -o /usr/local/bin/dumb-init "${DUMB_INIT_URL}" && \
+    chmod +x /usr/local/bin/dumb-init && \
+    /usr/local/bin/dumb-init --version
+
+# Add healthcheck for Airflow availability
+HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/dumb-init", "--", "/entrypoint"]
 CMD []

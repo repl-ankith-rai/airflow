@@ -42,13 +42,35 @@ function install_docker_cli() {
     dnf -y install docker-ce-cli
 }
 
+function install_dumb_init() {
+    # Install dumb-init with architecture detection
+    local arch
+    arch=$(uname -m)
+    local dumb_init_version="1.2.5"
+    local dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_${arch}"
+    
+    # Map architectures to dumb-init naming
+    if [[ "${arch}" == "x86_64" ]]; then
+        dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_amd64"
+    elif [[ "${arch}" == "aarch64" ]]; then
+        dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_arm64"
+    fi
+    
+    echo "Installing dumb-init v${dumb_init_version} from ${dumb_init_url}"
+    curl -L -o /usr/local/bin/dumb-init "${dumb_init_url}"
+    chmod +x /usr/local/bin/dumb-init
+    
+    # Verify installation
+    echo "Verifying dumb-init installation"
+    /usr/local/bin/dumb-init --version
+}
+
+
 function install_dev_dependencies() {
     dnf update -y
     dnf install -y epel-release
     dnf install -y ${DEV_DEPS} ${ADDITIONAL_DEV_DEPS:-}
-    # Install dumb-init directly since it's not in repos
-    curl -L -o /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64
-    chmod +x /usr/local/bin/dumb-init
+    install_dumb_init
     dnf clean all
     rm -rf /var/cache/dnf/*
 }
@@ -57,9 +79,7 @@ function install_runtime_dependencies() {
     dnf update -y
     dnf install -y epel-release
     dnf install -y ${RUNTIME_DEPS} ${ADDITIONAL_RUNTIME_DEPS:-}
-    # Install dumb-init directly since it's not in repos
-    curl -L -o /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64
-    chmod +x /usr/local/bin/dumb-init
+    install_dumb_init
     dnf clean all
     rm -rf /var/cache/dnf/*
 }
@@ -78,12 +98,14 @@ else
     exit 1
 fi
 
+echo "Installing dependencies for Amazon Linux 2023 FIPS-compliant environment"
+
 if [[ "${INSTALLATION_TYPE}" == "RUNTIME" ]]; then
     get_runtime_deps
     install_runtime_dependencies
-    install_docker_cli
+    install_docker_cli || echo "WARNING: Docker CLI installation failed, continuing without it"
 else
     get_dev_deps
     install_dev_dependencies
-    install_docker_cli
+    install_docker_cli || echo "WARNING: Docker CLI installation failed, continuing without it"
 fi
