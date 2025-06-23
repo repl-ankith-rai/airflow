@@ -35,8 +35,7 @@
 #                        all the build essentials. This makes the image
 #                        much smaller.
 #
-# Use Amazon Linux 2023 with Python 3.9
-ARG PYTHON_BASE_IMAGE="434423891815.dkr.ecr.us-east-1.amazonaws.com/machine-images/fips-base:m-16871-amazon-linux-2023-python-3-9-amd64"
+# Use the same builder frontend version for everyone
 ARG AIRFLOW_EXTRAS="aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,docker,elasticsearch,fab,ftp,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv,virtualenv"
 ARG ADDITIONAL_AIRFLOW_EXTRAS=""
 ARG ADDITIONAL_PYTHON_DEPS=""
@@ -48,15 +47,19 @@ ARG AIRFLOW_USER_HOME_DIR=/home/airflow
 # latest released version here
 ARG AIRFLOW_VERSION="2.11.0"
 
+# Use Amazon Linux 2023 with Python 3.9
+ARG PYTHON_BASE_IMAGE="434423891815.dkr.ecr.us-east-1.amazonaws.com/machine-images/fips-base:m-16871-amazon-linux-2023-python-3-9-amd64"
+
 # You can swap comments between those two args to test pip from the main version
 # When you attempt to test if the version of `pip` from specified branch works for our builds
 # Also use `force pip` label on your PR to swap all places we use `uv` to `pip`
 ARG AIRFLOW_PIP_VERSION=25.1.1
+# ARG AIRFLOW_PIP_VERSION="git+https://github.com/pypa/pip.git@main"
 ARG AIRFLOW_UV_VERSION=0.7.3
 ARG AIRFLOW_USE_UV="false"
 ARG UV_HTTP_TIMEOUT="300"
 ARG AIRFLOW_IMAGE_REPOSITORY="https://github.com/apache/airflow"
-ARG AIRFLOW_IMAGE_README_URL="https://raw.githubusercontent.com/apache/airflow/main/docs/docker-stack/README.md"
+ARG AIRFLOW_IMAGE_README_URL="https://raw.githubusercontent.com/apache/airflow/refs/tags/2.11.0/docs/docker-stack/README.md"
 
 # By default we install latest airflow from PyPI so we do not need to copy sources of Airflow
 # from the host - so we are using Dockerfile and copy it to /Dockerfile in target image
@@ -1406,12 +1409,9 @@ COPY --from=scripts common.sh /scripts/docker/
 
 # # Only copy mysql/mssql installation scripts for now - so that changing the other
 # # scripts which are needed much later will not invalidate the docker layer here
-# COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
+COPY --from=scripts install_postgres.sh /scripts/docker/
 
-# RUN bash /scripts/docker/install_mysql.sh dev && \
-#     bash /scripts/docker/install_mssql.sh dev && \
-#     bash /scripts/docker/install_postgres.sh dev
-# ENV PATH=${PATH}:/opt/mssql-tools/bin
+# RUN bash /scripts/docker/install_postgres.sh dev
 
 # By default we do not install from docker context files but if we decide to install from docker context
 # files, we should override those variables to "docker-context-files"
@@ -1421,8 +1421,8 @@ ARG AIRFLOW_USER_HOME_DIR
 ARG AIRFLOW_UID
 
 # Copy user creation script to build image
-COPY --from=scripts create_airflow_user.sh /
-RUN dnf update -y && bash /create_airflow_user.sh
+COPY --from=scripts create_airflow_user.sh /scripts/docker/
+RUN dnf update -y && bash /scripts/docker/create_airflow_user.sh
 
 COPY --chown=${AIRFLOW_UID}:0 ${DOCKER_CONTEXT_FILES} /docker-context-files
 
@@ -1664,9 +1664,11 @@ RUN dnf update -y && \
     curl https://packages.microsoft.com/config/rhel/9/prod.repo > /etc/yum.repos.d/mssql-release.repo && \
     ACCEPT_EULA=Y dnf install -y msodbcsql18 unixODBC-devel && \
     dnf clean all && \
-    rm -rf /var/cache/dnf/* && \
-    # Copy user creation script and create airflow user
-    bash /create_airflow_user.sh
+    rm -rf /var/cache/dnf/*
+
+# Copy user creation script and create airflow user
+COPY --from=scripts create_airflow_user.sh /scripts/docker/
+RUN bash /scripts/docker/create_airflow_user.sh
 
 # Having the variable in final image allows to disable providers manager warnings when
 # production image is prepared from sources rather than from package
@@ -1682,14 +1684,12 @@ COPY --from=scripts common.sh /scripts/docker/
 
 # # Only copy mysql/mssql installation scripts for now - so that changing the other
 # # scripts which are needed much later will not invalidate the docker layer here.
-# COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
+COPY --from=scripts install_postgres.sh /scripts/docker/
 # # We run scripts with bash here to make sure we can execute the scripts. Changing to +x might have an
 # # unexpected result - the cache for Dockerfiles might get invalidated in case the host system
 # # had different umask set and group x bit was not set. In Azure the bit might be not set at all.
 # # That also protects against AUFS Docker backend problem where changing the executable bit required sync
-# RUN bash /scripts/docker/install_mysql.sh prod && \
-#     bash /scripts/docker/install_mssql.sh prod && \
-#     bash /scripts/docker/install_postgres.sh prod && \
+# RUN bash /scripts/docker/install_postgres.sh prod
 RUN dnf update -y && \
     # Create AIRFLOW_USER_HOME_DIR first and set permissions
     mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
@@ -1811,12 +1811,7 @@ RUN ARCH=$(uname -m) && \
     DUMB_INIT_URL="https://github.com/Yelp/dumb-init/releases/download/v${DUMB_INIT_VERSION}/dumb-init_${DUMB_INIT_VERSION}_${DUMB_INIT_ARCH}" && \
     echo "Installing dumb-init from ${DUMB_INIT_URL}" && \
     curl -L -o /usr/local/bin/dumb-init "${DUMB_INIT_URL}" && \
-    chmod +x /usr/local/bin/dumb-init && \
-    /usr/local/bin/dumb-init --version
-
-# Add healthcheck for Airflow availability
-HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+    chmod +x /usr/local/bin/dumb-init
 
 ENTRYPOINT ["/usr/local/bin/dumb-init", "--", "/entrypoint"]
 CMD []

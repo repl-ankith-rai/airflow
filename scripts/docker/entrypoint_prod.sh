@@ -20,6 +20,13 @@ AIRFLOW_COMMAND="${1:-}"
 
 set -euo pipefail
 
+# This one is to workaround https://github.com/apache/airflow/issues/17546
+# issue with /usr/lib/<MACHINE>-linux-gnu/libstdc++.so.6: cannot allocate memory in static TLS block
+# We do not yet a more "correct" solution to the problem but in order to avoid raising new issues
+# by users of the prod image, we implement the workaround now.
+# The side effect of this is slightly (in the range of 100s of milliseconds) slower load for any
+# binary started and a little memory used for Heap allocated by initialization of libstdc++
+# This overhead is not happening for binaries that already link dynamically libstdc++
 # Update LD_PRELOAD path for Amazon Linux - only if file exists
 if [ -f "/usr/lib64/libstdc++.so.6" ]; then
     LD_PRELOAD="/usr/lib64/libstdc++.so.6"
@@ -67,12 +74,20 @@ function run_check_with_retries {
 
 function run_nc() {
     # Checks if it is possible to connect to the host using netcat.
+    #
+    # We want to avoid misleading messages and perform only forward lookup of the service IP address.
+    # Netcat when run without -n performs both forward and reverse lookup and fails if the reverse
+    # lookup name does not match the original name even if the host is reachable via IP. This happens
+    # randomly with docker-compose in GitHub Actions.
+    # Since we are not using reverse lookup elsewhere, we can perform forward lookup in python
+    # And use the IP in NC and add '-n' switch to disable any DNS use.
+    # Even if this message might be harmless, it might hide the real reason for the problem
+    # Which is the long time needed to start some services, seeing this message might be totally misleading
+    # when you try to analyse the problem, that's why it's best to avoid it,
     local host="${1}"
     local port="${2}"
     local ip
     ip=$(python -c "import socket; print(socket.gethostbyname('${host}'))")
-    
-    # Use ncat for Amazon Linux
     ${NC_CMD} -zvvn "${ip}" "${port}"
 }
 
@@ -153,7 +168,13 @@ function create_www_user() {
 }
 
 function create_system_user_if_missing() {
-    # For Amazon Linux 2023 OpenShift compatibility
+    # This is needed in case of OpenShift-compatible container execution. In case of OpenShift random
+    # User id is used when starting the image, however group 0 is kept as the user group. Our production
+    # Image is OpenShift compatible, so all permissions on all folders are set so that 0 group can exercise
+    # the same privileges as the default "airflow" user, this code checks if the user is already
+    # present in /etc/passwd and will create the system user dynamically, including setting its
+    # HOME directory to the /home/airflow so that (for example) the ${HOME}/.local folder where airflow is
+    # Installed can be automatically added to PYTHONPATH
     if ! whoami &> /dev/null; then
       if [[ -w /etc/passwd ]]; then
         echo "${USER_NAME:-default}:x:$(id -u):0:${USER_NAME:-default} user:${AIRFLOW_USER_HOME_DIR}:/sbin/nologin" \
@@ -242,8 +263,6 @@ function check_uid_gid() {
     fi
 }
 
-
-
 # In Airflow image we are setting PIP_USER variable to true, in order to install all the packages
 # by default with the ``--user`` flag. However this is a problem if a virtualenv is created later
 # which happens in PythonVirtualenvOperator. We are unsetting this variable here, so that it is
@@ -264,7 +283,6 @@ readonly CONNECTION_CHECK_MAX_COUNT
 CONNECTION_CHECK_SLEEP_TIME=${CONNECTION_CHECK_SLEEP_TIME:=3}
 readonly CONNECTION_CHECK_SLEEP_TIME
 
-
 create_system_user_if_missing
 set_pythonpath_for_root_user
 if [[ "${CONNECTION_CHECK_MAX_COUNT}" -gt "0" ]]; then
@@ -272,7 +290,7 @@ if [[ "${CONNECTION_CHECK_MAX_COUNT}" -gt "0" ]]; then
 fi
 
 if [[ -n "${_AIRFLOW_DB_UPGRADE=}" ]] || [[ -n "${_AIRFLOW_DB_MIGRATE=}" ]] ; then
-    migrate_db || echo "WARNING: Database migration failed, but continuing anyway"
+    migrate_db
 fi
 
 if [[ -n "${_AIRFLOW_DB_UPGRADE=}" ]] ; then

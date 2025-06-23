@@ -27,4 +27,4 @@ if [[ $(id -u) == "0" ]]; then
     echo
     exit 1
 fi
-exec "${HOME}"/.local/bin/pip "$@"
+exec "${HOME}"/.local/bin/pip "${@}"

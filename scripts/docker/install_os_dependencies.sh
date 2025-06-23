@@ -48,23 +48,18 @@ function install_dumb_init() {
     arch=$(uname -m)
     local dumb_init_version="1.2.5"
     local dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_${arch}"
-    
+
     # Map architectures to dumb-init naming
     if [[ "${arch}" == "x86_64" ]]; then
         dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_amd64"
     elif [[ "${arch}" == "aarch64" ]]; then
         dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_arm64"
     fi
-    
+
     echo "Installing dumb-init v${dumb_init_version} from ${dumb_init_url}"
     curl -L -o /usr/local/bin/dumb-init "${dumb_init_url}"
     chmod +x /usr/local/bin/dumb-init
-    
-    # Verify installation
-    echo "Verifying dumb-init installation"
-    /usr/local/bin/dumb-init --version
 }
-
 
 function install_dev_dependencies() {
     dnf update -y
@@ -103,9 +98,9 @@ echo "Installing dependencies for Amazon Linux 2023 FIPS-compliant environment"
 if [[ "${INSTALLATION_TYPE}" == "RUNTIME" ]]; then
     get_runtime_deps
     install_runtime_dependencies
-    install_docker_cli || echo "WARNING: Docker CLI installation failed, continuing without it"
+    install_docker_cli
 else
     get_dev_deps
     install_dev_dependencies
-    install_docker_cli || echo "WARNING: Docker CLI installation failed, continuing without it"
+    install_docker_cli
 fi
