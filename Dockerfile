@@ -47,8 +47,8 @@ ARG AIRFLOW_USER_HOME_DIR=/home/airflow
 # latest released version here
 ARG AIRFLOW_VERSION="2.11.0"
 
-ARG PYTHON_BASE_IMAGE="python:3.9-slim-bookworm"
-
+# Use Amazon Linux 2023 with Python 3.9
+ARG PYTHON_BASE_IMAGE="434423891815.dkr.ecr.us-east-1.amazonaws.com/machine-images/fips-base:m-16871-amazon-linux-2023-python-3-9-amd64"
 
 # You can swap comments between those two args to test pip from the main version
 # When you attempt to test if the version of `pip` from specified branch works for our builds
@@ -59,7 +59,7 @@ ARG AIRFLOW_UV_VERSION=0.7.3
 ARG AIRFLOW_USE_UV="false"
 ARG UV_HTTP_TIMEOUT="300"
 ARG AIRFLOW_IMAGE_REPOSITORY="https://github.com/apache/airflow"
-ARG AIRFLOW_IMAGE_README_URL="https://raw.githubusercontent.com/apache/airflow/main/docs/docker-stack/README.md"
+ARG AIRFLOW_IMAGE_README_URL="https://raw.githubusercontent.com/apache/airflow/refs/tags/2.11.0/docs/docker-stack/README.md"
 
 # By default we install latest airflow from PyPI so we do not need to copy sources of Airflow
 # from the host - so we are using Dockerfile and copy it to /Dockerfile in target image
@@ -89,6 +89,40 @@ FROM scratch as scripts
 # This is done in order to avoid problems with caching and file permissions and in order to
 # make the PROD Dockerfile standalone
 ##############################################################################################
+
+# Added script for user creation
+COPY <<"EOF" /create_airflow_user.sh
+#!/usr/bin/env bash
+# This script creates the airflow user and directories with proper permissions
+
+set -euo pipefail
+
+: "${AIRFLOW_USER_HOME_DIR:?AIRFLOW_USER_HOME_DIR must be set}"
+: "${AIRFLOW_HOME:?AIRFLOW_HOME must be set}"
+: "${AIRFLOW_UID:?AIRFLOW_UID must be set}"
+
+# Create AIRFLOW_USER_HOME_DIR first
+mkdir -p "${AIRFLOW_USER_HOME_DIR}"
+
+# Use userdel first to ensure clean state
+userdel -r airflow 2>/dev/null || true
+
+# Use useradd for Amazon Linux 2023 compatibility 
+useradd --uid "${AIRFLOW_UID}" \
+        --home "${AIRFLOW_USER_HOME_DIR}" \
+        --shell /bin/bash \
+        --system \
+        --create-home \
+        airflow
+
+mkdir -pv "${AIRFLOW_HOME}"
+mkdir -pv "${AIRFLOW_HOME}/dags"
+mkdir -pv "${AIRFLOW_HOME}/logs"
+
+chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}"
+chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}"
+find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
+EOF
 
 # The content below is automatically copied from scripts/docker/install_os_dependencies.sh
 COPY <<"EOF" /install_os_dependencies.sh
@@ -135,7 +169,7 @@ function get_runtime_apt_deps() {
     echo
     if [[ "${RUNTIME_APT_DEPS=}" == "" ]]; then
         RUNTIME_APT_DEPS="apt-transport-https apt-utils ca-certificates \
-curl dumb-init freetds-bin krb5-user libev4 libgeos-dev \
+curl freetds-bin krb5-user libev4 libgeos-dev \
 ldap-utils libsasl2-2 libsasl2-modules libxmlsec1 locales ${debian_version_apt_deps} \
 lsb-release openssh-client python3-selinux rsync sasl2-bin sqlite3 sudo unixodbc"
         export RUNTIME_APT_DEPS
@@ -472,7 +506,7 @@ function common::get_packaging_tool() {
         echo
         export PACKAGING_TOOL="pip"
         export PACKAGING_TOOL_CMD="pip"
-        export EXTRA_INSTALL_FLAGS="--root-user-action ignore"
+        export EXTRA_INSTALL_FLAGS=""
         export EXTRA_UNINSTALL_FLAGS="--yes"
         export UPGRADE_EAGERLY="--upgrade --upgrade-strategy eager"
         export UPGRADE_IF_NEEDED="--upgrade --upgrade-strategy only-if-needed"
@@ -543,7 +577,7 @@ function common::install_packaging_tools() {
         echo "${COLOR_BLUE}Installing pip version from spec ${AIRFLOW_PIP_VERSION}${COLOR_RESET}"
         echo
         # shellcheck disable=SC2086
-        pip install --root-user-action ignore --disable-pip-version-check "pip @ ${AIRFLOW_PIP_VERSION}"
+        python -m pip install --disable-pip-version-check "pip @ ${AIRFLOW_PIP_VERSION}"
     else
         local installed_pip_version
         installed_pip_version=$(python -c 'from importlib.metadata import version; print(version("pip"))')
@@ -552,7 +586,7 @@ function common::install_packaging_tools() {
             echo "${COLOR_BLUE}(Re)Installing pip version: ${AIRFLOW_PIP_VERSION}${COLOR_RESET}"
             echo
             # shellcheck disable=SC2086
-            pip install --root-user-action ignore --disable-pip-version-check "pip==${AIRFLOW_PIP_VERSION}"
+            python -m pip install --disable-pip-version-check "pip==${AIRFLOW_PIP_VERSION}"
         fi
     fi
     if [[ ! ${AIRFLOW_UV_VERSION} =~ [0-9.]* ]]; then
@@ -560,7 +594,7 @@ function common::install_packaging_tools() {
         echo "${COLOR_BLUE}Installing uv version from spec ${AIRFLOW_UV_VERSION}${COLOR_RESET}"
         echo
         # shellcheck disable=SC2086
-        pip install --root-user-action ignore --disable-pip-version-check "uv @ ${AIRFLOW_UV_VERSION}"
+        pip install --disable-pip-version-check "uv @ ${AIRFLOW_UV_VERSION}"
     else
         local installed_uv_version
         installed_uv_version=$(python -c 'from importlib.metadata import version; print(version("uv"))' 2>/dev/null || echo "Not installed yet")
@@ -569,7 +603,7 @@ function common::install_packaging_tools() {
             echo "${COLOR_BLUE}(Re)Installing uv version: ${AIRFLOW_UV_VERSION}${COLOR_RESET}"
             echo
             # shellcheck disable=SC2086
-            pip install --root-user-action ignore --disable-pip-version-check "uv==${AIRFLOW_UV_VERSION}"
+            pip install --disable-pip-version-check "uv==${AIRFLOW_UV_VERSION}"
         fi
     fi
     # make sure that the venv/user in .local exists
@@ -948,8 +982,12 @@ AIRFLOW_COMMAND="${1:-}"
 
 set -euo pipefail
 
-LD_PRELOAD="/usr/lib/$(uname -m)-linux-gnu/libstdc++.so.6"
-export LD_PRELOAD
+# Update LD_PRELOAD path for Amazon Linux - only if file exists
+if [ -f "/usr/lib64/libstdc++.so.6" ]; then
+    LD_PRELOAD="/usr/lib64/libstdc++.so.6"
+    export LD_PRELOAD
+fi
+
 
 function run_check_with_retries {
     local cmd
@@ -1208,7 +1246,7 @@ if [[ -n "${_AIRFLOW_WWW_USER_CREATE=}" ]] ; then
     create_www_user
 fi
 
-if [[ -n "${_PIP_ADDITIONAL_REQUIREMENTS=}" ]] ; then
+if [[ -n "${_PIP_ADDITIONAL_REQUIREMENTS=}" ]]; then
     >&2 echo
     >&2 echo "!!!!!  Installing additional requirements: '${_PIP_ADDITIONAL_REQUIREMENTS}' !!!!!!!!!!!!"
     >&2 echo
@@ -1316,11 +1354,50 @@ ENV DEV_APT_DEPS=${DEV_APT_DEPS} \
     ADDITIONAL_DEV_APT_ENV=${ADDITIONAL_DEV_APT_ENV}
 
 COPY --from=scripts install_os_dependencies.sh /scripts/docker/
-RUN bash /scripts/docker/install_os_dependencies.sh dev
+RUN dnf update -y && \
+    dnf install -y \
+        python3.9 \
+        python3.9-devel \
+        python3-pip \
+        python3-wheel \
+        python3-setuptools \
+        gcc \
+        gcc-c++ \
+        git \
+        wget \
+        tar \
+        gzip \
+        make \
+        openssl-devel \
+        libffi-devel \
+        zlib-devel \
+        krb5-devel \
+        openldap-devel \
+        sqlite-devel \
+        unixODBC-devel \
+        libxml2-devel \
+        libxslt-devel \
+        postgresql-devel \
+        mariadb-connector-c-devel \
+        cyrus-sasl-devel \
+        freetds-devel \
+        findutils \
+        which \
+        nmap-ncat \
+        && \
+    alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
+    alternatives --set python /usr/bin/python3.9 && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
 
-ARG INSTALL_MYSQL_CLIENT="true"
+RUN curl https://packages.microsoft.com/config/rhel/9/prod.repo > /etc/yum.repos.d/mssql-release.repo && \
+    ACCEPT_EULA=Y dnf install -y msodbcsql18 unixODBC-devel && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
+
+ARG INSTALL_MYSQL_CLIENT="false"
 ARG INSTALL_MYSQL_CLIENT_TYPE="mariadb"
-ARG INSTALL_MSSQL_CLIENT="true"
+ARG INSTALL_MSSQL_CLIENT="false"
 ARG INSTALL_POSTGRES_CLIENT="true"
 
 ENV INSTALL_MYSQL_CLIENT=${INSTALL_MYSQL_CLIENT} \
@@ -1330,14 +1407,11 @@ ENV INSTALL_MYSQL_CLIENT=${INSTALL_MYSQL_CLIENT} \
 
 COPY --from=scripts common.sh /scripts/docker/
 
-# Only copy mysql/mssql installation scripts for now - so that changing the other
-# scripts which are needed much later will not invalidate the docker layer here
-COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
+# # Only copy mysql/mssql installation scripts for now - so that changing the other
+# # scripts which are needed much later will not invalidate the docker layer here
+COPY --from=scripts install_postgres.sh /scripts/docker/
 
-RUN bash /scripts/docker/install_mysql.sh dev && \
-    bash /scripts/docker/install_mssql.sh dev && \
-    bash /scripts/docker/install_postgres.sh dev
-ENV PATH=${PATH}:/opt/mssql-tools/bin
+# RUN bash /scripts/docker/install_postgres.sh dev
 
 # By default we do not install from docker context files but if we decide to install from docker context
 # files, we should override those variables to "docker-context-files"
@@ -1346,9 +1420,9 @@ ARG AIRFLOW_HOME
 ARG AIRFLOW_USER_HOME_DIR
 ARG AIRFLOW_UID
 
-RUN adduser --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password \
-       --quiet "airflow" --uid "${AIRFLOW_UID}" --gid "0" --home "${AIRFLOW_USER_HOME_DIR}" && \
-    mkdir -p ${AIRFLOW_HOME} && chown -R "airflow:0" "${AIRFLOW_USER_HOME_DIR}" ${AIRFLOW_HOME}
+# Copy user creation script to build image
+COPY --from=scripts create_airflow_user.sh /scripts/docker/
+RUN dnf update -y && bash /scripts/docker/create_airflow_user.sh
 
 COPY --chown=${AIRFLOW_UID}:0 ${DOCKER_CONTEXT_FILES} /docker-context-files
 
@@ -1495,11 +1569,17 @@ RUN --mount=type=cache,id=prod-$TARGETARCH-$DEPENDENCY_CACHE_EPOCH,target=/tmp/.
     if [[ -n "${ADDITIONAL_PYTHON_DEPS}" ]]; then \
         bash /scripts/docker/install_additional_dependencies.sh; \
     fi; \
+    # Upgrade requests to resolve dependency conflicts with azure-kusto-data and openlineage-python
+    pip install --upgrade "requests>=2.32.3" && \
+    # Fix pip cache permissions
+    mkdir -p /tmp/.cache/pip && \
+    chown -R airflow:0 /tmp/.cache && \
+    chmod -R g+rw /tmp/.cache && \
     find "${AIRFLOW_USER_HOME_DIR}/.local/" -name '*.pyc' -print0 | xargs -0 rm -f || true ; \
-    find "${AIRFLOW_USER_HOME_DIR}/.local/" -type d -name '__pycache__' -print0 | xargs -0 rm -rf || true ; \
+    find "${AIRFLOW_USER_HOME_DIR}/.local/" -type d -name '__pycache__' -print0 | xargs -0 rm -rf || true ;
     # make sure that all directories and files in .local are also group accessible
-    find "${AIRFLOW_USER_HOME_DIR}/.local" -executable ! -type l -print0 | xargs --null chmod g+x; \
-    find "${AIRFLOW_USER_HOME_DIR}/.local" ! -type l -print0 | xargs --null chmod g+rw
+    # find "${AIRFLOW_USER_HOME_DIR}/.local" -executable ! -type l -print0 | xargs --null chmod g+x; \
+    # find "${AIRFLOW_USER_HOME_DIR}/.local" ! -type l -print0 | xargs --null chmod g+rw
 
 # In case there is a requirements.txt file in "docker-context-files" it will be installed
 # during the build additionally to whatever has been installed so far. It is recommended that
@@ -1516,26 +1596,21 @@ RUN --mount=type=cache,id=prod-$TARGETARCH-$DEPENDENCY_CACHE_EPOCH,target=/tmp/.
 ##############################################################################################
 FROM ${PYTHON_BASE_IMAGE} as main
 
-# Nolog bash flag is currently ignored - but you can replace it with other flags (for example
-# xtrace - to show commands executed)
 SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-o", "nounset", "-o", "nolog", "-c"]
 
-ARG AIRFLOW_UID
-
-LABEL org.apache.airflow.distro="debian" \
-  org.apache.airflow.module="airflow" \
-  org.apache.airflow.component="airflow" \
-  org.apache.airflow.image="airflow" \
-  org.apache.airflow.uid="${AIRFLOW_UID}"
-
 ARG PYTHON_BASE_IMAGE
+ARG AIRFLOW_HOME=/opt/airflow
+ARG AIRFLOW_USER_HOME_DIR=/home/airflow
+ARG AIRFLOW_UID="50000"
 
 ENV PYTHON_BASE_IMAGE=${PYTHON_BASE_IMAGE} \
-    # Make sure noninteractive debian install is used and language variables set
     DEBIAN_FRONTEND=noninteractive LANGUAGE=C.UTF-8 LANG=C.UTF-8 LC_ALL=C.UTF-8 \
     LC_CTYPE=C.UTF-8 LC_MESSAGES=C.UTF-8 LD_LIBRARY_PATH=/usr/local/lib \
     PIP_CACHE_DIR=/tmp/.cache/pip \
-    UV_CACHE_DIR=/tmp/.cache/uv
+    UV_CACHE_DIR=/tmp/.cache/uv \
+    AIRFLOW_HOME=${AIRFLOW_HOME} \
+    AIRFLOW_USER_HOME_DIR=${AIRFLOW_USER_HOME_DIR} \
+    AIRFLOW_UID=${AIRFLOW_UID}
 
 ARG RUNTIME_APT_DEPS=""
 ARG ADDITIONAL_RUNTIME_APT_DEPS=""
@@ -1555,53 +1630,84 @@ ENV RUNTIME_APT_DEPS=${RUNTIME_APT_DEPS} \
     INSTALL_MYSQL_CLIENT_TYPE=${INSTALL_MYSQL_CLIENT_TYPE} \
     INSTALL_MSSQL_CLIENT=${INSTALL_MSSQL_CLIENT} \
     INSTALL_POSTGRES_CLIENT=${INSTALL_POSTGRES_CLIENT} \
-    GUNICORN_CMD_ARGS="--worker-tmp-dir /dev/shm" \
-    AIRFLOW_INSTALLATION_METHOD=${AIRFLOW_INSTALLATION_METHOD}
+    GUNICORN_CMD_ARGS="--worker-tmp-dir /dev/shm"
 
 COPY --from=scripts install_os_dependencies.sh /scripts/docker/
-RUN bash /scripts/docker/install_os_dependencies.sh runtime
+RUN dnf update -y && \
+    dnf install -y \
+        python3.9 \
+        python3.9-devel \
+        python3-pip \
+        python3-wheel \
+        python3-setuptools \
+        openssl \
+        libffi \
+        krb5-libs \
+        openldap \
+        sqlite \
+        unixODBC \
+        libxml2 \
+        libxslt \
+        postgresql-libs \
+        mariadb-connector-c \
+        cyrus-sasl \
+        freetds \
+        findutils \
+        which \
+        nmap-ncat \
+        && \
+    alternatives --install /usr/bin/python python /usr/bin/python3.9 1 && \
+    alternatives --set python /usr/bin/python3.9 && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/* && \
+    # Install MSSQL client
+    curl https://packages.microsoft.com/config/rhel/9/prod.repo > /etc/yum.repos.d/mssql-release.repo && \
+    ACCEPT_EULA=Y dnf install -y msodbcsql18 unixODBC-devel && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
+
+# Copy user creation script and create airflow user
+COPY --from=scripts create_airflow_user.sh /scripts/docker/
+RUN bash /scripts/docker/create_airflow_user.sh
 
 # Having the variable in final image allows to disable providers manager warnings when
 # production image is prepared from sources rather than from package
 ARG AIRFLOW_INSTALLATION_METHOD="apache-airflow"
 ARG AIRFLOW_IMAGE_REPOSITORY
 ARG AIRFLOW_IMAGE_README_URL
-ARG AIRFLOW_USER_HOME_DIR
-ARG AIRFLOW_HOME
 
 # By default PIP installs everything to ~/.local
 ENV PATH="${AIRFLOW_USER_HOME_DIR}/.local/bin:${PATH}" \
-    VIRTUAL_ENV="${AIRFLOW_USER_HOME_DIR}/.local" \
-    AIRFLOW_UID=${AIRFLOW_UID} \
-    AIRFLOW_USER_HOME_DIR=${AIRFLOW_USER_HOME_DIR} \
-    AIRFLOW_HOME=${AIRFLOW_HOME}
+    VIRTUAL_ENV="${AIRFLOW_USER_HOME_DIR}/.local"
 
 COPY --from=scripts common.sh /scripts/docker/
 
-# Only copy mysql/mssql installation scripts for now - so that changing the other
-# scripts which are needed much later will not invalidate the docker layer here.
-COPY --from=scripts install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
-# We run scripts with bash here to make sure we can execute the scripts. Changing to +x might have an
-# unexpected result - the cache for Dockerfiles might get invalidated in case the host system
-# had different umask set and group x bit was not set. In Azure the bit might be not set at all.
-# That also protects against AUFS Docker backend problem where changing the executable bit required sync
-RUN bash /scripts/docker/install_mysql.sh prod \
-    && bash /scripts/docker/install_mssql.sh prod \
-    && bash /scripts/docker/install_postgres.sh prod \
-    && adduser --gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password \
-           --quiet "airflow" --uid "${AIRFLOW_UID}" --gid "0" --home "${AIRFLOW_USER_HOME_DIR}" \
-# Make Airflow files belong to the root group and are accessible. This is to accommodate the guidelines from
-# OpenShift https://docs.openshift.com/enterprise/3.0/creating_images/guidelines.html
-    && mkdir -pv "${AIRFLOW_HOME}" \
-    && mkdir -pv "${AIRFLOW_HOME}/dags" \
-    && mkdir -pv "${AIRFLOW_HOME}/logs" \
-    && chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" \
-    && chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" \
-    && find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x \
-    && find "${AIRFLOW_USER_HOME_DIR}" -executable ! -type l -print0 | xargs --null chmod g+x
-
-ARG AIRFLOW_SOURCES_FROM
-ARG AIRFLOW_SOURCES_TO
+# # Only copy mysql/mssql installation scripts for now - so that changing the other
+# # scripts which are needed much later will not invalidate the docker layer here.
+COPY --from=scripts install_postgres.sh /scripts/docker/
+# # We run scripts with bash here to make sure we can execute the scripts. Changing to +x might have an
+# # unexpected result - the cache for Dockerfiles might get invalidated in case the host system
+# # had different umask set and group x bit was not set. In Azure the bit might be not set at all.
+# # That also protects against AUFS Docker backend problem where changing the executable bit required sync
+# RUN bash /scripts/docker/install_postgres.sh prod
+RUN dnf update -y && \
+    # Create AIRFLOW_USER_HOME_DIR first and set permissions
+    mkdir -p "${AIRFLOW_USER_HOME_DIR}" && \
+    # Use userdel first to ensure clean state
+    userdel -r airflow 2>/dev/null || true && \
+    # Use useradd for AL2023 compatibility 
+    useradd --uid "${AIRFLOW_UID}" \
+            --home "${AIRFLOW_USER_HOME_DIR}" \
+            --shell /bin/bash \
+            --system \
+            --create-home \
+            airflow && \
+    mkdir -pv "${AIRFLOW_HOME}" && \
+    mkdir -pv "${AIRFLOW_HOME}/dags" && \
+    mkdir -pv "${AIRFLOW_HOME}/logs" && \
+    chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}" "${AIRFLOW_HOME}" && \
+    find "${AIRFLOW_HOME}" -executable ! -type l -print0 | xargs --null chmod g+x
 
 COPY --from=airflow-build-image --chown=airflow:0 \
      "${AIRFLOW_USER_HOME_DIR}/.local" "${AIRFLOW_USER_HOME_DIR}/.local"
@@ -1622,12 +1728,15 @@ COPY --from=scripts airflow-scheduler-autorestart.sh /airflow-scheduler-autorest
 RUN chmod a+rx /entrypoint /clean-logs \
     && chmod g=u /etc/passwd \
     && chmod g+w "${AIRFLOW_USER_HOME_DIR}/.local" \
+    && chown -R airflow:0 "${AIRFLOW_USER_HOME_DIR}/.local" \
+    && chmod -R g+rw "${AIRFLOW_USER_HOME_DIR}/.local" \
     && usermod -g 0 airflow -G 0
 
 # make sure that the venv is activated for all users
 # including plain sudo, sudo with --interactive flag
-RUN sed --in-place=.bak "s/secure_path=\"/secure_path=\"$(echo -n ${AIRFLOW_USER_HOME_DIR} | \
-        sed 's/\//\\\//g')\/.local\/bin:/" /etc/sudoers
+RUN if [ -f /etc/sudoers ]; then \
+    sed --in-place=.bak "s/secure_path=\"/secure_path=\"$(echo -n ${AIRFLOW_USER_HOME_DIR} | sed 's/\//\\\//g')\/.local\/bin:/" /etc/sudoers; \
+  fi
 
 ARG AIRFLOW_VERSION
 ARG AIRFLOW_PIP_VERSION
@@ -1641,6 +1750,8 @@ ENV DUMB_INIT_SETSID="1" \
     PS1="(airflow)" \
     AIRFLOW_VERSION=${AIRFLOW_VERSION} \
     AIRFLOW__CORE__LOAD_EXAMPLES="false" \
+    AIRFLOW__METRICS__TIMER_UNIT_CONSISTENCY="true" \
+    AIRFLOW__METRICS__USE_PATTERN_MATCH="true" \
     PATH="/root/bin:${PATH}" \
     AIRFLOW_PIP_VERSION=${AIRFLOW_PIP_VERSION} \
     AIRFLOW_UV_VERSION=${AIRFLOW_UV_VERSION} \
@@ -1687,5 +1798,24 @@ LABEL org.apache.airflow.distro="debian" \
   org.opencontainers.image.title="Production Airflow Image" \
   org.opencontainers.image.description="Reference, production-ready Apache Airflow image"
 
-ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint"]
+# Install dumb-init with proper architecture detection
+RUN ARCH=$(uname -m) && \
+    DUMB_INIT_VERSION="1.2.5" && \
+    if [[ "${ARCH}" == "x86_64" ]]; then \
+        DUMB_INIT_ARCH="x86_64"; \
+    elif [[ "${ARCH}" == "arm64" ]]; then \
+        DUMB_INIT_ARCH="arm64.deb"; \
+    elif [[ "${ARCH}" == "amd64" ]]; then \
+        DUMB_INIT_ARCH="amd64.deb"; \
+    elif [[ "${ARCH}" == "aarch64" ]]; then \
+        DUMB_INIT_ARCH="aarch64"; \
+    else \
+        DUMB_INIT_ARCH="${ARCH}"; \
+    fi && \
+    DUMB_INIT_URL="https://github.com/Yelp/dumb-init/releases/download/v${DUMB_INIT_VERSION}/dumb-init_${DUMB_INIT_VERSION}_${DUMB_INIT_ARCH}" && \
+    echo "Installing dumb-init from ${DUMB_INIT_URL}" && \
+    curl -L -o /usr/local/bin/dumb-init "${DUMB_INIT_URL}" && \
+    chmod +x /usr/local/bin/dumb-init
+
+ENTRYPOINT ["/usr/local/bin/dumb-init", "--", "/entrypoint"]
 CMD []

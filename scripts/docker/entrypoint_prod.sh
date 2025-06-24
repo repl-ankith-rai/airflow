@@ -27,8 +27,14 @@ set -euo pipefail
 # The side effect of this is slightly (in the range of 100s of milliseconds) slower load for any
 # binary started and a little memory used for Heap allocated by initialization of libstdc++
 # This overhead is not happening for binaries that already link dynamically libstdc++
-LD_PRELOAD="/usr/lib/$(uname -m)-linux-gnu/libstdc++.so.6"
-export LD_PRELOAD
+# Update LD_PRELOAD path for Amazon Linux - only if file exists
+if [ -f "/usr/lib64/libstdc++.so.6" ]; then
+    LD_PRELOAD="/usr/lib64/libstdc++.so.6"
+    export LD_PRELOAD
+fi
+    
+# Set netcat command based on OS
+NC_CMD="ncat"
 
 function run_check_with_retries {
     local cmd
@@ -82,7 +88,7 @@ function run_nc() {
     local port="${2}"
     local ip
     ip=$(python -c "import socket; print(socket.gethostbyname('${host}'))")
-    nc -zvvn "${ip}" "${port}"
+    ${NC_CMD} -zvvn "${ip}" "${port}"
 }
 
 

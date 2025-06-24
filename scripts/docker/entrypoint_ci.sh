@@ -30,8 +30,11 @@ fi
 # The side effect of this is slightly (in the range of 100s of milliseconds) slower load for any
 # binary started and a little memory used for Heap allocated by initialization of libstdc++
 # This overhead is not happening for binaries that already link dynamically libstdc++
-LD_PRELOAD="/usr/lib/$(uname -m)-linux-gnu/libstdc++.so.6"
-export LD_PRELOAD
+# Update LD_PRELOAD path for Amazon Linux - only if file exists
+if [ -f "/usr/lib64/libstdc++.so.6" ]; then
+    LD_PRELOAD="/usr/lib64/libstdc++.so.6"
+    export LD_PRELOAD
+fi
 
 # Add "other" and "group" write permission to the tmp folder
 # Note that it will also change permissions in the /tmp folder on the host
