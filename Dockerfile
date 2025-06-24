@@ -1802,9 +1802,13 @@ LABEL org.apache.airflow.distro="debian" \
 RUN ARCH=$(uname -m) && \
     DUMB_INIT_VERSION="1.2.5" && \
     if [[ "${ARCH}" == "x86_64" ]]; then \
-        DUMB_INIT_ARCH="amd64"; \
+        DUMB_INIT_ARCH="x86_64"; \
+    elif [[ "${ARCH}" == "arm64" ]]; then \
+        DUMB_INIT_ARCH="arm64.deb"; \
+    elif [[ "${ARCH}" == "amd64" ]]; then \
+        DUMB_INIT_ARCH="amd64.deb"; \
     elif [[ "${ARCH}" == "aarch64" ]]; then \
-        DUMB_INIT_ARCH="arm64"; \
+        DUMB_INIT_ARCH="aarch64"; \
     else \
         DUMB_INIT_ARCH="${ARCH}"; \
     fi && \

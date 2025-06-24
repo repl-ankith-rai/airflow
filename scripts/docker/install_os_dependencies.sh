@@ -47,15 +47,21 @@ function install_dumb_init() {
     local arch
     arch=$(uname -m)
     local dumb_init_version="1.2.5"
-    local dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_${arch}"
+    local dumb_init_url
+    local dumb_init_arch
 
     # Map architectures to dumb-init naming
     if [[ "${arch}" == "x86_64" ]]; then
-        dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_amd64"
+        dumb_init_arch="x86_64"
+    elif [[ "${arch}" == "arm64" ]]; then
+        dumb_init_arch="arm64.deb"
+    elif [[ "${arch}" == "amd64" ]]; then
+        dumb_init_arch="amd64.deb"
     elif [[ "${arch}" == "aarch64" ]]; then
-        dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_arm64"
-    fi
-
+        dumb_init_arch="aarch64"
+    else
+        dumb_init_arch="${arch}"
+    dumb_init_url="https://github.com/Yelp/dumb-init/releases/download/v${dumb_init_version}/dumb-init_${dumb_init_version}_${arch}"
     echo "Installing dumb-init v${dumb_init_version} from ${dumb_init_url}"
     curl -L -o /usr/local/bin/dumb-init "${dumb_init_url}"
     chmod +x /usr/local/bin/dumb-init
