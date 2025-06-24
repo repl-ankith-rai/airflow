@@ -25,6 +25,70 @@ This build of Apache Airflow 2.11.0 has been modified to run on Amazon Linux 202
    - LD_PRELOAD settings for Amazon Linux libraries
    - Secure cryptographic defaults
 
+## Setup and Build Instructions
+
+### Prerequisites
+
+- [Rancher Desktop](https://rancherdesktop.io/) for container management
+- [Docker BuildKit](https://docs.docker.com/build/buildkit/) support
+- Access to the AWS ECR repository containing the FIPS base image
+- Git
+
+### Getting the Source Code
+
+1. Clone the repository with the FIPS-compliant Dockerfile:
+   ```bash
+   git clone git@github.com:repl-ankith-rai/airflow.git
+   cd airflow
+   ```
+
+### Building the Docker Image
+
+1. Set up BuildKit for Docker (recommended for faster builds):
+   ```bash
+   export DOCKER_BUILDKIT=1
+   docker buildx create --name airflow_cache --driver docker-container
+   docker buildx use airflow_cache
+   ```
+
+2. Build the FIPS-compliant Docker image:
+   ```bash
+   docker buildx build --builder airflow_cache \
+     --build-arg INCLUDE_PRE_RELEASE=false \
+     --build-arg INSTALL_DISTRIBUTIONS_FROM_CONTEXT=false \
+     --build-arg DOCKER_CONTEXT_FILES=./docker-context-files \
+     --build-arg COMMIT_SHA=1260d4c5fb415aa43d025daf26bd4c81918b9294 \
+     --platform linux/amd64 \
+     --output type=docker \
+     -t apache/airflow:2.11.0-local-fips \
+     .
+   ```
+
+   > **Note**: For faster rebuilds, remove the `--no-cache` option after your first successful build.
+
+### Pushing to ECR Repository
+
+1. Login to AWS ECR:
+   ```bash
+   aws ecr get-login-password --region us-east-1 | docker login -u AWS --password-stdin 434423891815.dkr.ecr.us-east-1.amazonaws.com
+   ```
+
+2. Tag the locally built image for the ECR repository:
+   ```bash
+   docker tag apache/airflow:2.11.0-local-fips 434423891815.dkr.ecr.us-east-1.amazonaws.com/machine-images/fips-base:apache-airflow-2.11.0-fips-python-3-9-amd64
+   ```
+
+3. Push the image to ECR:
+   ```bash
+   docker push 434423891815.dkr.ecr.us-east-1.amazonaws.com/machine-images/fips-base:apache-airflow-2.11.0-fips-python-3-9-amd64
+   ```
+
+### Troubleshooting
+
+1. **SSL/Connection Issues During Build**
+   - If you encounter SSL-related errors or connection timeouts during the build process, try disconnecting from VPN services.
+   - VPNs may interfere with Docker's network connectivity, particularly when pulling base images.
+
 ## Verifying FIPS Mode
 
 To verify if FIPS mode is correctly enabled in your container, you can run these commands manually:
